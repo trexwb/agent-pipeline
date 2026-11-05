@@ -55,10 +55,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------- 工具函数 ----------
-log_info()  { echo -e "${GREEN}[信息]${NC} $*"; }
-log_warn()  { echo -e "${YELLOW}[警告]${NC} $*"; }
-log_error() { echo -e "${RED}[错误]${NC} $*"; }
-log_dry()   { echo -e "${CYAN}[演练]${NC} $*"; }
+log_info()  { echo -e "${GREEN}[信息]${NC} $*" >&2; }
+log_warn()  { echo -e "${YELLOW}[警告]${NC} $*" >&2; }
+log_error() { echo -e "${RED}[错误]${NC} $*" >&2; }
+log_dry()   { echo -e "${CYAN}[演练]${NC} $*" >&2; }
 
 # 获取平台目录
 get_platform_dir() {
@@ -182,7 +182,8 @@ download_and_extract() {
         unzip -q "$tmp_dir/main.zip" -d "$extract_dir"
         # GitHub archive zip 会解压到 agent-pipeline-main/ 子目录
         if [[ -d "$extract_dir/agent-pipeline-main" ]]; then
-            mv "$extract_dir/agent-pipeline-main"/* "$extract_dir/" 2>/dev/null || true
+            # 移动所有文件（包括隐藏文件）到 extract_dir
+            (cd "$extract_dir/agent-pipeline-main" && find . -mindepth 1 -maxdepth 1 -exec mv {} "$extract_dir/" \;)
             rmdir "$extract_dir/agent-pipeline-main" 2>/dev/null || true
         fi
     else
