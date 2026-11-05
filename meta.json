@@ -1,0 +1,14 @@
+{
+  "name": "agent-pipeline",
+  "display_name": "agent-pipeline",
+  "description": "多 Agent 软件开发流水线编排器：按阶段（产品规划→需求拆解→架构设计→开发编码→代码审查→测试→部署）驱动 CodeBuddy / Claude Code / Codex 等 CLI 协作，支持 GitHub Issue 自动修复循环。",
+  "detail_describe": "把软件开发拆成多个阶段，每阶段由独立子 Agent（角色 + 提示词 + 模型 + 工具白名单）执行\n阶段间通过 artifacts/ 传递产物\n支持人工确认、断点续跑、限额自动切换模型\n工作目录由用户自定义（默认当前目录，可用 --work-dir/--project-root 覆盖）\n经 CLI 适配层兼容 CodeBuddy / Claude Code / Codex / 自定义 agent CLI，零 npm 依赖，跨平台",
+  "display_description": "多 Agent 软件开发流水线编排",
+  "author": "trexwb",
+  "version": "1.0.0",
+  "type": "开发工具",
+  "scope": [
+    "main"
+  ],
+  "source": "https://github.com/trexwb/workflows"
+}
