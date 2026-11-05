@@ -177,6 +177,60 @@ function insertRelease(root, version, opts, notes, dryRun) {
   return block;
 }
 
+// ---------- 版本线重置 ----------
+const HISTORY_HEADING = '## 历史归档（重置前）';
+const HISTORY_NOTE = '> 以下条目属于重置前的版本线，仅作追溯，不参与当前版本线；标题已降级以免与当前版本冲突。';
+
+/** 把 Unreleased 之后的所有旧版本段落降级归档，再插入新的起始版本段落。重复 reset 不会产生多个归档标题。 */
+function insertReset(root, version, opts, notes, dryRun) {
+  const p = changelogPath(root);
+  const content = fs.readFileSync(p, 'utf8');
+  const s = content.indexOf(NOTES_START);
+  const e = content.indexOf(NOTES_END);
+  if (s === -1 || e === -1 || e < s) throw new Error(CHANGELOG_FILE + ' 缺少待办区标记');
+  const cleared = content.slice(0, s + NOTES_START.length)
+    + '\n<!-- 用 node scripts/version.js note "问题描述" 追加 -->\n' + NOTES_END;
+  const rest = content.slice(e + NOTES_END.length).replace(/^[\r\n]+/, '');
+  const archived = rest
+    .split(HISTORY_HEADING).join('')
+    .split(HISTORY_NOTE).join('')
+    .replace(/^## \[(\d+\.\d+\.\d+)\](.*)$/gm, '### [$1]$2')
+    .replace(/^[\r\n]+/, '').trim();
+  const block = releaseBlock(version, opts, notes);
+  const history = archived
+    ? '\n\n' + HISTORY_HEADING + '\n\n' + HISTORY_NOTE + '\n\n' + archived + '\n'
+    : '';
+  const next = cleared + '\n\n' + block + history;
+  if (!dryRun) fs.writeFileSync(p, next);
+  return block;
+}
+
+/** reset：与 bump 的区别是允许降级、不递增，且把旧版本历史归档到文末。 */
+function reset(root, version, opts) {
+  const o = Object.assign({ reason: '', added: [], changed: [], fixed: [], 'dry-run': false }, opts || {});
+  if (!SEMVER_RE.test(String(version || ''))) throw new Error('reset 需要合法的 x.y.z 版本号');
+  if (!String(o.reason).trim()) throw new Error('reset 需要 --reason "<重置原因>"');
+  for (const k of ['added', 'changed', 'fixed']) {
+    if (!Array.isArray(o[k])) o[k] = o[k] ? [o[k]] : [];
+  }
+  const current = readVersion(root);
+  const notes = readNotes(root);
+  if (o['dry-run']) {
+    return { current, next: version, notes, dryRun: true, block: releaseBlock(version, o, notes) };
+  }
+  const p = path.join(root, VERSION_FILE);
+  const meta = JSON.parse(fs.readFileSync(p, 'utf8'));
+  meta.version = version;
+  fs.writeFileSync(p, JSON.stringify(meta, null, 2) + '\n');
+  const synced = sync(root, version, false);
+  const block = insertReset(root, version, o, notes, false);
+  return {
+    current, next: version, notes, dryRun: false,
+    changed: [VERSION_FILE].concat(synced.changed, [CHANGELOG_FILE]),
+    block,
+  };
+}
+
 // ---------- 完整 bump ----------
 function bump(root, level, opts) {
   const o = Object.assign({ reason: '', added: [], changed: [], fixed: [], 'dry-run': false }, opts || {});
@@ -258,6 +312,6 @@ function listInstalled(root, home, projectRoot) {
 module.exports = {
   VERSION_FILE, CHANGELOG_FILE, SEMVER_RE, SKILL_NAME,
   readVersion, parse, compare, nextVersion,
-  collect, sync, readNotes, addNote, insertRelease, releaseBlock, bump,
+  collect, sync, readNotes, addNote, insertRelease, releaseBlock, bump, reset, insertReset,
   readInstalledVersion, listInstalled,
 };

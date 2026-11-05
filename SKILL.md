@@ -1,6 +1,6 @@
 ---
 name: agent-pipeline
-version: 1.1.2
+version: 1.0.0
 display_name: 多 Agent 开发流水线
 description: 多 Agent 软件开发流水线编排器，把一条需求自动推进到可交付代码。按阶段驱动独立子 Agent 依次完成产品规划、需求拆解、架构设计、开发编码、代码审查、测试与部署，阶段间用 artifacts 传递产物，并支持人工确认、远程确认、断点续跑与限额自动换模型。This skill should be used when 用户想从一个想法自动走到部署、要求按阶段编排多个 AI agent 协作、想让不同阶段使用不同角色或模型、要跑需求构建器生成 A/B 双版本需求、或需要 GitHub Issue 自动修复循环。触发词包括 自动编排、流水线、pipeline、从需求到开发完成、多 Agent 协作、阶段化开发、issue 自动修复。适用于 WorkBuddy、CodeBuddy、zCode、Qoder、Marvis、Claude Code、Codex 及任意兼容 Agent Skills 的宿主或自定义 agent CLI。不用于单文件小改动、简单问答或直接的代码片段生成。
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob
@@ -250,6 +250,6 @@ agent-pipeline/
 
 ## 版本
 
-2.1.2（唯一权威来源：`meta.json` 的 `version` 字段）
+1.0.0（唯一权威来源：`meta.json` 的 `version` 字段）
 
 维护者用 `node scripts/version.js` 记录使用中问题、发版与校验一致性；版本历史与迭代流程见 `CHANGELOG.md`。升级各宿主已安装副本用 `node scripts/install.js --force`。

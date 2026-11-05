@@ -188,3 +188,6 @@ damei-cms.zip
 .workbuddy/*
 .zwork
 .zwork/*
+
+# 测试产物目录（演练或测试时生成）
+pipeline-output/

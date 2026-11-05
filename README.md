@@ -4,7 +4,7 @@
 
 遵循 **Agent Skills 开放标准**，一份 `SKILL.md` 可部署到 **WorkBuddy / CodeBuddy / zCode / Qoder / Marvis / Claude Code / Codex** 及任意自定义 agent CLI。编排器本身是纯 Node.js 脚本（**Node.js >= 18、零 npm 依赖、macOS / Linux / Windows 通用**），AI 能力来自当前宿主的 agent CLI。技能的完整行为契约（目标、输入、工作流与角色、执行步骤、输出格式、约束）见 [`SKILL.md` 的「技能契约」](SKILL.md#技能契约)。
 
-当前版本：**2.1.2**（唯一权威来源：`meta.json` 的 `version`；用 `node scripts/version.js` 管理，历史见 `CHANGELOG.md`）。
+当前版本：**1.0.0**（唯一权威来源：`meta.json` 的 `version`；用 `node scripts/version.js` 管理，历史见 `CHANGELOG.md`）。
 
 **内容导航**：[快速开始](#1-快速开始) · [安装](#2-安装到五个宿主) · [配置 CLI](#3-配置宿主-cli) · [运行流水线](#4-运行流水线) · [辅助入口](#5-三个辅助入口) · [定制](#6-定制不改动安装目录) · [故障排查](#7-故障排查) · [约定与退出码](#8-运行时约定与退出码) · [目录](#9-目录结构) · [版本管理](#10-版本管理与迭代) · [文档索引](#11-文档索引)
 
@@ -387,8 +387,11 @@ node scripts/install.js --platform auto --scope user --force
 | `node scripts/version.js sync` | 把派生位置同步到权威版本 |
 | `node scripts/version.js note "<问题>"` | 记录使用中发现的问题 |
 | `node scripts/version.js bump <level> --reason "<摘要>"` | 发版，支持 `--added` / `--changed` / `--fixed` / `--dry-run` |
+| `node scripts/version.js reset <x.y.z> --reason "<原因>"` | 重置版本线：允许降级，旧版本段落归档到 CHANGELOG 文末 |
 | `node scripts/version.js installed` | 盘点五宿主副本版本；发现过期副本 `exit 2` |
 | `node scripts/version.js log` | 查看完整版本历史 |
+
+**版本线重置**：`bump` 只允许递增。需要回到某个低版本重新迭代时用 `reset`，例如 `node scripts/version.js reset 1.0.0 --reason "重置版本线，从 1.0.0 重新迭代"`。它会同步所有派生位置，并把旧版本段落降级收进 `CHANGELOG.md` 的「历史归档（重置前）」区，**不丢弃历史**。重置后 `installed` 可能把仍装着旧版本号的宿主副本显示为「更新」，用 `install.js --force` 覆盖即可。
 
 `--link` 软链安装会自动跟随源码版本，无需重复升级。完整历史与规则见 [`CHANGELOG.md`](CHANGELOG.md)。
 

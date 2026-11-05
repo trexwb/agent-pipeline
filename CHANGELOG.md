@@ -14,6 +14,8 @@
 
 一次发布只表达一个主题；若同时包含新能力和破坏性变更，按 `major` 发版。
 
+**版本线重置**：`bump` 只允许递增。需要回到低版本重新迭代时用 `reset <x.y.z> --reason "<原因>"`（允许降级），它会同步所有派生位置，并把旧版本段落降级收进文末「历史归档（重置前）」区，不丢弃历史。当前版本线自 `1.0.0`（2026-11-05）重新开始。
+
 ## 迭代闭环
 
 使用过程中发现问题后，按固定流程逐步修复升级，避免「改了代码但版本号没动、各平台副本版本不一致」：
@@ -36,6 +38,14 @@ node scripts/install.js --platform auto --scope user --force
 
 `check` 适合放在提交前或 CI 中：版本位置不一致时以 `exit 1` 失败。`installed` 发现过期副本时以 `exit 2` 提示。软链安装（`--link`）会自动跟随源码版本，不需要重复升级。
 
+重置版本线是独立操作，不走上面的递增流程：
+
+```bash
+node scripts/version.js reset 1.0.0 --reason "重置版本线，从 1.0.0 重新迭代"
+node scripts/version.js check
+node scripts/install.js --platform auto --scope user --force
+```
+
 ## [Unreleased]
 
 使用中发现的问题先记在这里；修复后运行 `bump`，这些条目会自动归档到新版本的「本次归档的待办记录」。
@@ -44,7 +54,18 @@ node scripts/install.js --platform auto --scope user --force
 <!-- 用 node scripts/version.js note "问题描述" 追加 -->
 <!-- NOTES:END -->
 
-## [2.1.2] - 2026-11-05
+## [1.0.0] - 2026-11-05
+
+> 重置版本线，从 1.0.0 重新迭代
+
+### Changed
+- 此前 1.0.0–2.1.2 的变更记录保留在「历史归档（重置前）」区
+
+## 历史归档（重置前）
+
+> 以下条目属于重置前的版本线，仅作追溯，不参与当前版本线；标题已降级以免与当前版本冲突。
+
+### [2.1.2] - 2026-11-05
 
 > 确认角色名为产品规划引导师，统一订正规格笔误并修复 SKILL.md 版本不一致
 
@@ -56,7 +77,7 @@ node scripts/install.js --platform auto --scope user --force
 - SKILL.md frontmatter 的 version 被手工改成 0.1.1，与权威 meta.json 2.1.1 不一致
 - 确认阶段 1 角色名应为「产品规划引导师」，规格中的角色名漏字，需统一订正
 
-## [2.1.1] - 2026-11-05
+### [2.1.1] - 2026-11-05
 
 > 按技能契约对齐 7 阶段与 7 角色，补齐目标、输入、执行步骤、输出格式与约束
 
@@ -75,7 +96,7 @@ node scripts/install.js --platform auto --scope user --force
 - 工作流要求每个阶段由指定角色执行，但 01-product-plan 与 02-requirements 共用 product-manager，与规格不符
 - SKILL.md 缺少目标/输入/工作流与角色/执行步骤/输出格式/约束的完整技能契约，且交付汇报未按阶段分条输出
 
-## [2.1.0] - 2026-11-05
+### [2.1.0] - 2026-11-05
 
 > 新增版本号管理与迭代机制，支持使用中问题记录、语义化发版与多宿主副本盘点
 
@@ -93,7 +114,7 @@ node scripts/install.js --platform auto --scope user --force
 ### 本次归档的待办记录
 - SKILL.md 与 watch-issues.js 注释仍写 --daemon，但实现从未解析该参数，容易误导使用者
 
-## [2.0.0] - 2026-11-05
+### [2.0.0] - 2026-11-05
 
 > 多平台兼容升级：让同一份 skill 可安装到 WorkBuddy / CodeBuddy / zCode / Marvis / Qoder 并被各宿主正确驱动。
 
@@ -119,7 +140,7 @@ node scripts/install.js --platform auto --scope user --force
 - 项目级安装目标若落在源码目录内会递归复制，安装器增加拒绝检查
 - `--platform all,common` 组合报「未知平台」，改为支持 `all` / `auto` 与具体平台混合
 
-## [1.0.0] - 2026-10-16
+### [1.0.0] - 2026-10-16（重置前版本线，与当前 1.0.0 无关联）
 
 > 初始版本。
 

@@ -10,6 +10,7 @@
  *   node scripts/version.js bump patch --reason "摘要" --fixed "修复项" [--dry-run]
  *   node scripts/version.js bump minor --reason "摘要" --added "新增项"
  *   node scripts/version.js bump major --reason "摘要"   # 破坏性变更
+ *   node scripts/version.js reset 1.0.0 --reason "重置版本线"  # 重置版本线（允许降级，归档旧历史）
  *   node scripts/version.js installed [--project-root <dir>]  # 各宿主已安装版本与升级提示
  *   node scripts/version.js log                         # 查看完整 CHANGELOG
  *   node scripts/version.js help
@@ -58,6 +59,8 @@ function help() {
   note "<问题描述>"            记录使用中发现的问题到 CHANGELOG 的 Unreleased 待办区
   bump <level> --reason "<摘要>" [--added "..."] [--changed "..."] [--fixed "..."] [--dry-run]
                               level = patch | minor | major | 显式 x.y.z
+  reset <x.y.z> --reason "<原因>" [--dry-run]
+                              重置版本线：允许降级，旧版本段落归档到 CHANGELOG 文末
   installed [--project-root <dir>] [--home <dir>]
                              盘点五宿主已安装副本的版本，列出需要升级的目标
   log                         打印 CHANGELOG.md
@@ -150,6 +153,28 @@ function bump(args) {
   return 0;
 }
 
+function reset(args) {
+  const version = args._[1];
+  if (!version) { console.error('用法：node scripts/version.js reset <x.y.z> --reason "<原因>"'); return 1; }
+  const opts = {
+    reason: String(args.reason === true ? '' : args.reason || '').trim(),
+    added: asArray(args.added), changed: asArray(args.changed), fixed: asArray(args.fixed),
+    'dry-run': !!args['dry-run'],
+  };
+  const r = V.reset(ROOT, version, opts);
+  console.log((r.dryRun ? '[演练] ' : '') + '版本线重置：' + r.current + ' → ' + r.next);
+  console.log('归档待办问题 ' + r.notes.length + ' 条');
+  if (r.dryRun) console.log('\n将写入 CHANGELOG：\n' + r.block);
+  else {
+    console.log('已更新：' + r.changed.join('、'));
+    console.log('旧版本段落已移入 CHANGELOG.md 的「历史归档（重置前）」区，未丢弃。');
+    console.log('\n下一步：node scripts/version.js check && node scripts/version.js installed');
+    console.log('若各宿主装有旧版本线副本，用 node scripts/install.js --force 覆盖；'
+      + 'installed 可能显示为「更新」，属重置后的预期情况。');
+  }
+  return 0;
+}
+
 function installed(args) {
   const r = V.listInstalled(ROOT, args.home, args['project-root']);
   console.log('源码版本：' + r.expected);
@@ -191,6 +216,7 @@ function main() {
     case 'sync': return sync(args);
     case 'note': return note(args);
     case 'bump': return bump(args);
+    case 'reset': return reset(args);
     case 'installed': return installed(args);
     case 'log': return log();
     case 'help': case '--help': case '-h': help(); return 0;
