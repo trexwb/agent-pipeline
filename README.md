@@ -4,7 +4,7 @@
 
 遵循 **Agent Skills 开放标准**，一份 `SKILL.md` 可部署到 **WorkBuddy / CodeBuddy / zCode / Qoder / Marvis / Claude Code / Codex** 及任意自定义 agent CLI。编排器本身是纯 Node.js 脚本（**Node.js >= 18、零 npm 依赖、macOS / Linux / Windows 通用**），AI 能力来自当前宿主的 agent CLI。技能的完整行为契约（目标、输入、工作流与角色、执行步骤、输出格式、约束）见 [`SKILL.md` 的「技能契约」](SKILL.md#技能契约)。
 
-当前版本：**2.1.1**（唯一权威来源：`meta.json` 的 `version`；用 `node scripts/version.js` 管理，历史见 `CHANGELOG.md`）。
+当前版本：**2.1.2**（唯一权威来源：`meta.json` 的 `version`；用 `node scripts/version.js` 管理，历史见 `CHANGELOG.md`）。
 
 **内容导航**：[快速开始](#1-快速开始) · [安装](#2-安装到五个宿主) · [配置 CLI](#3-配置宿主-cli) · [运行流水线](#4-运行流水线) · [辅助入口](#5-三个辅助入口) · [定制](#6-定制不改动安装目录) · [故障排查](#7-故障排查) · [约定与退出码](#8-运行时约定与退出码) · [目录](#9-目录结构) · [版本管理](#10-版本管理与迭代) · [文档索引](#11-文档索引)
 
@@ -193,15 +193,13 @@ node scripts/run-pipeline.js --project-name demo-app --remote --work-dir ./run
 
 | 序号·阶段 | 阶段 id | 当前执行角色 | agent id | 产物 | 需确认 |
 |-----------|---------|--------------|----------|------|--------|
-| 1 产品规划 | `01-product-plan` | 品规划引导师 | `product-manager` | `artifacts/01-prd.md` | 是 |
+| 1 产品规划 | `01-product-plan` | 产品规划引导师 | `product-manager` | `artifacts/01-prd.md` | 是 |
 | 2 需求拆解 | `02-requirements` | 需求拆解与功能点呈现专员 | `requirement-analyst` | `artifacts/02-tasks.md` | 是 |
 | 3 架构设计 | `03-architecture` | 架构师 | `architect` | `artifacts/03-architecture.md` | 否 |
 | 4 开发编码 | `04-develop` | 全栈开发工程师 | `developer` | `artifacts/04-implementation.md`（代码写入 `--project-dir`） | 否 |
 | 5 代码审查 | `05-code-review` | 代码审查工程师 | `code-reviewer` | `artifacts/05-review.md` | 否 |
 | 6 测试 | `06-test` | 测试工程师 | `tester` | `artifacts/06-test-report.md` | 否 |
 | 7 部署 | `07-deploy` | 运维工程师 | `devops` | `artifacts/07-deploy.md` | 否 |
-
-> 规格中的「品规划引导师」在 `config/agents.json` 与 `prompts/01-product-plan.md` 中写作「产品规划引导师」，为同一角色（疑为规格漏字，待确认）。
 
 `artifacts/00-requirement.md` 是可选的需求输入（由需求构建器生成），缺失时仅告警。每阶段会把 `input` 列出的前序产物全文拼进 prompt；提示词模板要求子 Agent 把文档正文输出到 stdout，由编排器统一落盘，禁止子 Agent 自行写产物文件。信息缺失或需求歧义时的确认规则见 [`SKILL.md` 的「约束」](SKILL.md#约束)。
 

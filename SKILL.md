@@ -1,6 +1,6 @@
 ---
 name: agent-pipeline
-version: 0.1.1
+version: 1.1.2
 display_name: 多 Agent 开发流水线
 description: 多 Agent 软件开发流水线编排器，把一条需求自动推进到可交付代码。按阶段驱动独立子 Agent 依次完成产品规划、需求拆解、架构设计、开发编码、代码审查、测试与部署，阶段间用 artifacts 传递产物，并支持人工确认、远程确认、断点续跑与限额自动换模型。This skill should be used when 用户想从一个想法自动走到部署、要求按阶段编排多个 AI agent 协作、想让不同阶段使用不同角色或模型、要跑需求构建器生成 A/B 双版本需求、或需要 GitHub Issue 自动修复循环。触发词包括 自动编排、流水线、pipeline、从需求到开发完成、多 Agent 协作、阶段化开发、issue 自动修复。适用于 WorkBuddy、CodeBuddy、zCode、Qoder、Marvis、Claude Code、Codex 及任意兼容 Agent Skills 的宿主或自定义 agent CLI。不用于单文件小改动、简单问答或直接的代码片段生成。
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob
@@ -31,7 +31,7 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 
 | 序号 | 阶段 | 当前执行角色 | agent id | 阶段产出 |
 |------|------|--------------|----------|----------|
-| 1 | 产品规划 | 品规划引导师 | `product-manager` | `artifacts/01-prd.md` |
+| 1 | 产品规划 | 产品规划引导师 | `product-manager` | `artifacts/01-prd.md` |
 | 2 | 需求拆解 | 需求拆解与功能点呈现专员 | `requirement-analyst` | `artifacts/02-tasks.md` |
 | 3 | 架构设计 | 架构师 | `architect` | `artifacts/03-architecture.md` |
 | 4 | 开发编码 | 全栈开发工程师 | `developer` | `artifacts/04-implementation.md` + 代码写入项目目录 |
@@ -39,7 +39,7 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 | 6 | 测试 | 测试工程师 | `tester` | `artifacts/06-test-report.md` |
 | 7 | 部署 | 运维工程师 | `devops` | `artifacts/07-deploy.md` |
 
-> 规格中的「品规划引导师」在 `config/agents.json` 与 `prompts/01-product-plan.md` 中写作「产品规划引导师」（疑为规格漏字），为同一角色，待确认后统一。提示词模板中「·架构方案推荐师」等后缀是对该角色能力的补充说明，不构成额外角色。
+> 提示词模板中「·架构方案推荐师」等后缀是对该角色能力的补充说明，不构成额外角色。
 
 ### 执行步骤
 
@@ -56,7 +56,7 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 
 ```text
 【阶段 1｜产品规划】
-执行角色：品规划引导师
+执行角色：产品规划引导师
 阶段产出：<产物摘要 + artifacts/01-prd.md 路径>
 
 （阶段 2～7 同格式）
@@ -250,6 +250,6 @@ agent-pipeline/
 
 ## 版本
 
-2.1.1（唯一权威来源：`meta.json` 的 `version` 字段）
+2.1.2（唯一权威来源：`meta.json` 的 `version` 字段）
 
 维护者用 `node scripts/version.js` 记录使用中问题、发版与校验一致性；版本历史与迭代流程见 `CHANGELOG.md`。升级各宿主已安装副本用 `node scripts/install.js --force`。

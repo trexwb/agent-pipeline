@@ -44,6 +44,18 @@ node scripts/install.js --platform auto --scope user --force
 <!-- 用 node scripts/version.js note "问题描述" 追加 -->
 <!-- NOTES:END -->
 
+## [2.1.2] - 2026-11-05
+
+> 确认角色名为产品规划引导师，统一订正规格笔误并修复 SKILL.md 版本不一致
+
+### Fixed
+- 角色名统一为产品规划引导师，移除 SKILL.md / README.md 的漏字待确认说明与 agents.json 的括号备注
+- SKILL.md frontmatter 的 version 被手工改成 0.1.1，按权威 meta.json 同步回 2.1.1
+
+### 本次归档的待办记录
+- SKILL.md frontmatter 的 version 被手工改成 0.1.1，与权威 meta.json 2.1.1 不一致
+- 确认阶段 1 角色名应为「产品规划引导师」，规格中的角色名漏字，需统一订正
+
 ## [2.1.1] - 2026-11-05
 
 > 按技能契约对齐 7 阶段与 7 角色，补齐目标、输入、执行步骤、输出格式与约束
