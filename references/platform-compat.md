@@ -17,6 +17,8 @@ description: 做什么 + 何时触发
 - `description` 是唯一的自动触发信号，需同时写清「做什么」和「哪些场景用」。zCode 的 skill-creator 明确建议写得偏主动，否则模型容易漏触发。
 - 未知 frontmatter 字段会被各宿主忽略，因此 `version` / `display_name` / `allowed-tools` 等扩展字段可安全共存。
 
+> 本文件只讨论 **skills 安装路径**。`Claude Code` 与 `Codex` 通过 `scripts/lib/adapter.js` 的 `claude` / `codex` 方言被流水线调用，属于 CLI 适配层支持的宿主，不在上表的安装目标内；任意其它自定义 CLI 可用 `plain.command` 接入。
+
 **不要**在 `SKILL.md` 正文里使用 `${CODEBUDDY_SKILL_DIR}` 之类的宿主专属变量：CodeBuddy 会在加载时替换，其余宿主不会，导致同一份文档行为不一致。统一用 `<SKILL_DIR>` 文字占位，并要求宿主 Agent 先定位 `SKILL.md` 所在目录。
 
 ## 2. 发现路径矩阵

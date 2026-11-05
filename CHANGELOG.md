@@ -44,6 +44,25 @@ node scripts/install.js --platform auto --scope user --force
 <!-- 用 node scripts/version.js note "问题描述" 追加 -->
 <!-- NOTES:END -->
 
+## [2.1.1] - 2026-11-05
+
+> 按技能契约对齐 7 阶段与 7 角色，补齐目标、输入、执行步骤、输出格式与约束
+
+### Added
+- SKILL.md 新增技能契约章节：目标、输入、工作流与角色、执行步骤、输出格式、约束
+
+### Changed
+- config/agents.json 的 7 个角色名对齐规格，角色提示词加入不编造、缺失项与假设点约束
+- README.md 阶段表增加当前执行角色与 agent id 列
+
+### Fixed
+- 01-product-plan 与 02-requirements 原共用 product-manager，新增 requirement-analyst 专用于需求拆解
+- 交付汇报未按阶段分条输出，补齐分阶段输出格式与覆盖 7 阶段的全流程汇总
+
+### 本次归档的待办记录
+- 工作流要求每个阶段由指定角色执行，但 01-product-plan 与 02-requirements 共用 product-manager，与规格不符
+- SKILL.md 缺少目标/输入/工作流与角色/执行步骤/输出格式/约束的完整技能契约，且交付汇报未按阶段分条输出
+
 ## [2.1.0] - 2026-11-05
 
 > 新增版本号管理与迭代机制，支持使用中问题记录、语义化发版与多宿主副本盘点

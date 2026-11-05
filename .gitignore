@@ -159,3 +159,32 @@ processed-issues.json
 # 安装脚本生成的分发包
 dist/
 *.zip
+
+# mac
+.DS_Store
+
+# 打包产物
+damei-cms.zip
+.pack-temp
+
+# ide & ai local files
+.vscode/
+.idea/
+.qwen
+.cursor
+.marvis/
+.marvis/*
+.workbuddy
+.workbuddy/*
+.trae
+.trae/*
+.codex
+.codex/*
+.dumate
+.dumate/*
+.tmp
+.tmp/*
+.workbuddy
+.workbuddy/*
+.zwork
+.zwork/*

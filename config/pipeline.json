@@ -18,7 +18,7 @@
     {
       "id": "02-requirements",
       "name": "需求拆解",
-      "agent": "product-manager",
+      "agent": "requirement-analyst",
       "promptFile": "prompts/02-requirements.md",
       "input": [
         "artifacts/01-prd.md"

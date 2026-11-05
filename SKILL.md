@@ -1,8 +1,8 @@
 ---
 name: agent-pipeline
-version: 2.1.0
+version: 0.1.1
 display_name: 多 Agent 开发流水线
-description: 多 Agent 软件开发流水线编排器，把一条需求自动推进到可交付代码。按阶段驱动独立子 Agent 依次完成产品规划、需求拆解、架构设计、开发编码、代码审查、测试与部署，阶段间用 artifacts 传递产物，并支持人工确认、远程确认、断点续跑与限额自动换模型。This skill should be used when 用户想从一个想法自动走到部署、要求按阶段编排多个 AI agent 协作、想让不同阶段使用不同角色或模型、要跑需求构建器生成 A/B 双版本需求、或需要 GitHub Issue 自动修复循环。触发词包括 自动编排、流水线、pipeline、从需求到开发完成、多 Agent 协作、阶段化开发、issue 自动修复。适用于 WorkBuddy、CodeBuddy、zCode、Marvis、Qoder 及任意兼容 Agent Skills 的宿主。不用于单文件小改动、简单问答或直接的代码片段生成。
+description: 多 Agent 软件开发流水线编排器，把一条需求自动推进到可交付代码。按阶段驱动独立子 Agent 依次完成产品规划、需求拆解、架构设计、开发编码、代码审查、测试与部署，阶段间用 artifacts 传递产物，并支持人工确认、远程确认、断点续跑与限额自动换模型。This skill should be used when 用户想从一个想法自动走到部署、要求按阶段编排多个 AI agent 协作、想让不同阶段使用不同角色或模型、要跑需求构建器生成 A/B 双版本需求、或需要 GitHub Issue 自动修复循环。触发词包括 自动编排、流水线、pipeline、从需求到开发完成、多 Agent 协作、阶段化开发、issue 自动修复。适用于 WorkBuddy、CodeBuddy、zCode、Qoder、Marvis、Claude Code、Codex 及任意兼容 Agent Skills 的宿主或自定义 agent CLI。不用于单文件小改动、简单问答或直接的代码片段生成。
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
@@ -11,6 +11,68 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 把软件开发拆成多个阶段，每个阶段由独立子 Agent（角色 + 系统提示词 + 模型 + 工具白名单）执行，阶段间通过 `artifacts/` 传递产物。编排器负责组装 prompt → 调用宿主 agent CLI → 落盘产物 → 人工确认 / 断点续跑 / 限额自动切换模型。
 
 本 skill 是**纯 Node.js 编排壳**（Node >= 18，零 npm 依赖），自身不实现 AI 能力，AI 能力来自当前宿主的 agent CLI。
+
+## 技能契约
+
+> 本节定义技能的行为规范。宿主 Agent 加载本 skill 后**必须**遵守；`scripts/` 是实现层，不改变契约。
+
+### 目标
+
+帮助用户「从一个想法自动走到部署」：把用户需求拆分为固定阶段，每个阶段交由指定角色/模型完成，阶段之间顺序衔接，直至部署完成。
+
+### 输入
+
+- 用户在自定义 agent CLI 工具中输入的需求描述。
+- 未提供需求描述时不得启动流水线：列出缺失项并请用户补充。
+
+### 工作流与角色
+
+严格按照以下 7 个阶段顺序执行，前一阶段完成后再进入下一阶段。每个阶段只由表中指定的角色执行，不得跳过或调换阶段顺序。
+
+| 序号 | 阶段 | 当前执行角色 | agent id | 阶段产出 |
+|------|------|--------------|----------|----------|
+| 1 | 产品规划 | 品规划引导师 | `product-manager` | `artifacts/01-prd.md` |
+| 2 | 需求拆解 | 需求拆解与功能点呈现专员 | `requirement-analyst` | `artifacts/02-tasks.md` |
+| 3 | 架构设计 | 架构师 | `architect` | `artifacts/03-architecture.md` |
+| 4 | 开发编码 | 全栈开发工程师 | `developer` | `artifacts/04-implementation.md` + 代码写入项目目录 |
+| 5 | 代码审查 | 代码审查工程师 | `code-reviewer` | `artifacts/05-review.md` |
+| 6 | 测试 | 测试工程师 | `tester` | `artifacts/06-test-report.md` |
+| 7 | 部署 | 运维工程师 | `devops` | `artifacts/07-deploy.md` |
+
+> 规格中的「品规划引导师」在 `config/agents.json` 与 `prompts/01-product-plan.md` 中写作「产品规划引导师」（疑为规格漏字），为同一角色，待确认后统一。提示词模板中「·架构方案推荐师」等后缀是对该角色能力的补充说明，不构成额外角色。
+
+### 执行步骤
+
+1. 接收用户输入的需求。
+2. 按上述阶段顺序逐一调用对应角色推进任务。
+3. 每个阶段完成后，输出该阶段的产出，再进入下一阶段。
+4. 全部阶段完成后，汇总整条流水线的执行结果。
+
+实现层映射：每阶段对应 `run-pipeline.js` 的一次 CLI 调用，产物由编排器从 stdout 落盘。宿主默认带 `--interactive`，阶段 1/2 的确认点会把产物与「待定假设」一并转述给用户，得到确认后再继续；后续阶段输入出现歧义时应暂停，用 `--from <阶段> --amend "<意见>"` 重跑，不得擅自推进。`--from` / `--to` 仅用于失败续跑或用户明确指定的阶段范围，不得用来默认跳过阶段。
+
+### 输出格式
+
+按阶段分条输出，每条包含**阶段序号与名称、当前执行角色、该阶段产出**；最终输出**一条全流程汇总**，覆盖 7 个阶段的完成情况：
+
+```text
+【阶段 1｜产品规划】
+执行角色：品规划引导师
+阶段产出：<产物摘要 + artifacts/01-prd.md 路径>
+
+（阶段 2～7 同格式）
+
+【全流程汇总】
+1 产品规划 ✓ / 2 需求拆解 ✓ / 3 架构设计 ✓ / 4 开发编码 ✓ / 5 代码审查 ✓ / 6 测试 ✓ / 7 部署 ✓
+代码目录：<projectDir>；日志：logs/pipeline.log；未实际执行的部署动作说明
+```
+
+### 约束
+
+- **输出语言**：简体中文；英文术语、代码、命令与专名保持原样。
+- **阶段与角色**：每个阶段只由工作流中指定的角色执行，不得跳过或调换阶段顺序。
+- **信息缺失**：列出缺失项并请用户补充后再继续，不得自行编造业务规则、数据或结论。
+- **超出范围**：说明超出范围的原因，返回可用的阶段与角色清单供用户选择，不启动流水线。
+- **歧义与不确定**：标注假设点并请求用户确认后再执行对应阶段。
 
 ## 何时使用
 
@@ -21,7 +83,7 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 | 已有仓库，希望新 Issue 自动分析、修复、验证、出 PR 描述 | `scripts/watch-issues.js` + `config/issue-pipeline.json` |
 | 想先把远端项目拉到开发分支再跑流水线 | `scripts/init-project.js` |
 
-不要在只需要改一个函数、回答一个问题时启动流水线；全流程会多次调用 CLI，成本与时间较高。
+不要在只需要改一个函数、回答一个问题时启动流水线；全流程会多次调用 CLI，成本与时间较高。请求超出编排范围时，按「约束」说明原因并返回上面工作流与角色的 7 阶段清单供用户选择，不要启动流水线。
 
 ## 在宿主中如何执行
 
@@ -37,7 +99,7 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
    - 修改意见 → 以 `--from <stageId> --amend "<意见>"` 重跑该阶段。
    - 协议细节与状态文件 schema 见 `references/remote-confirm.md`。
 5. **失败与续跑**。阶段失败 exit 2，用 `--from <失败阶段>` 续跑，前序产物保留不浪费；退出码 0 成功、1 配置或 CLI 错误、42 等待远程确认。
-6. **交付汇报**。完成后列出 `artifacts/` 下的产物路径、代码目录 `<projectDir>`、日志 `logs/pipeline.log`，并指出测试与部署章节中尚未实际执行的部分（编排器只产出说明，不替用户执行部署）。
+6. **交付汇报**。严格按「输出格式」章节输出：逐阶段分条列出阶段序号与名称、当前执行角色、该阶段产出（含产物路径），最后给出覆盖 7 个阶段的全流程汇总，并注明代码目录 `<projectDir>`、日志 `logs/pipeline.log` 与编排器未实际执行的部署动作。
 
 ## 快速开始
 
@@ -188,6 +250,6 @@ agent-pipeline/
 
 ## 版本
 
-2.1.0（唯一权威来源：`meta.json` 的 `version` 字段）
+2.1.1（唯一权威来源：`meta.json` 的 `version` 字段）
 
 维护者用 `node scripts/version.js` 记录使用中问题、发版与校验一致性；版本历史与迭代流程见 `CHANGELOG.md`。升级各宿主已安装副本用 `node scripts/install.js --force`。
