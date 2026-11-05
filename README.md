@@ -12,17 +12,28 @@
 
 ## 1. 快速开始
 
-前置：Node.js >= 18；已安装并登录当前宿主的 agent CLI（如 CodeBuddy Code）。
+前置：已安装并登录当前宿主的 agent CLI（如 CodeBuddy Code）。
+
+### 安装（三选一）
 
 ```bash
-# 1) 预览安装位置 → 安装到本机已检测到的宿主
-node scripts/install.js --dry-run
-node scripts/install.js --platform auto --scope user
+# 方式 A：一键远程安装（推荐，无需 clone 仓库、无需 Node.js）
+bash <(curl -fsSL https://raw.githubusercontent.com/trexwb/agent-pipeline/main/scripts/install-remote.sh)
 
-# 2) 演练：校验阶段链、提示词与 CLI 探测（不调用模型）
+# 方式 B：从 GitHub 远程安装（需要 Node.js >= 18）
+node scripts/install.js --from-github
+
+# 方式 C：本地源码安装（已 clone 仓库时）
+node scripts/install.js --platform auto --scope user
+```
+
+### 运行
+
+```bash
+# 1) 演练：校验阶段链、提示词与 CLI 探测（不调用模型）
 node scripts/run-pipeline.js --project-name demo-app --project-root ./pipeline-run --work-dir ./pipeline-run --dry-run
 
-# 3) 正式运行：01/02 产出后暂停审阅，可回灌修改意见
+# 2) 正式运行：01/02 产出后暂停审阅，可回灌修改意见
 node scripts/run-pipeline.js --project-name demo-app --project-root ./pipeline-run --work-dir ./pipeline-run --interactive
 ```
 
@@ -109,8 +120,9 @@ node scripts/run-pipeline.js --project-name smoke --project-root /tmp/ap-smoke -
    - 打包 `agent-pipeline-1.0.0.zip`（排除 `.git/`、`node_modules/` 等）
    - 创建 GitHub Release 并上传 zip
 3. **用户安装**：
-   - 方式 A（远程）：`node scripts/install.js --from-github --version 1.0.0`
-   - 方式 B（手动）：下载 zip → 解压 → `node scripts/install.js --platform auto --scope user`
+   - **方式 A（推荐，一键安装）**：`bash <(curl -fsSL https://raw.githubusercontent.com/trexwb/agent-pipeline/main/scripts/install-remote.sh)`
+   - 方式 B（Node 安装）：`node scripts/install.js --from-github --version 1.0.0`
+   - 方式 C（手动）：下载 zip → 解压 → `node scripts/install.js --platform auto --scope user`
 
 ### 远程安装原理
 
@@ -119,6 +131,34 @@ node scripts/run-pipeline.js --project-name smoke --project-root /tmp/ap-smoke -
 2. 下载对应 zip 到临时目录
 3. 解压后执行常规安装流程
 4. 安装完成后自动清理临时文件
+
+### 一键远程安装（推荐）
+
+**无需 clone 仓库、无需 Node.js**，员工只需复制粘贴一行命令：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/trexwb/agent-pipeline/main/scripts/install-remote.sh)
+```
+
+选项：
+```bash
+# 安装指定版本
+bash <(curl -fsSL https://raw.githubusercontent.com/trexwb/agent-pipeline/main/scripts/install-remote.sh) -- --version 1.0.0
+
+# 安装到所有宿主
+bash <(curl -fsSL https://raw.githubusercontent.com/trexwb/agent-pipeline/main/scripts/install-remote.sh) -- --platform all
+
+# 预览安装计划（不执行）
+bash <(curl -fsSL https://raw.githubusercontent.com/trexwb/agent-pipeline/main/scripts/install-remote.sh) -- --dry-run
+
+# 覆盖已存在的安装
+bash <(curl -fsSL https://raw.githubusercontent.com/trexwb/agent-pipeline/main/scripts/install-remote.sh) -- --force
+
+# 卸载
+bash <(curl -fsSL https://raw.githubusercontent.com/trexwb/agent-pipeline/main/scripts/install-remote.sh) -- --uninstall
+```
+
+脚本自动检测本机已安装的宿主（Qoder / WorkBuddy / CodeBuddy / zCode / Marvis），只安装到存在的目录。
 
 ---
 
