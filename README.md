@@ -57,6 +57,8 @@ node scripts/run-pipeline.js --project-name demo-app --project-root ./pipeline-r
 | `--link` | 建立目录软链而非复制（开发模式，改源码即时生效） | 关闭 |
 | `--force` | 覆盖已存在的同名安装 | 关闭 |
 | `--uninstall` | 卸载（仅删除含本 skill `SKILL.md` 的目录） | 关闭 |
+| `--from-github` | 从 GitHub Releases 下载最新版本安装（无需 clone 源码） | 关闭 |
+| `--version <x.y.z>` | 与 `--from-github` 配合，下载指定版本（默认获取最新版本） | — |
 | `--dry-run` | 只打印计划，不写任何文件 | 关闭 |
 
 - `auto` = 只安装到本机已检测到的宿主配置目录；`all` = 五个主宿主（不含 `common`）；`common` = 通用 `.agents/skills`，一份安装可被 zCode / Codex / Cursor 等共同发现。
@@ -67,11 +69,17 @@ node scripts/run-pipeline.js --project-name demo-app --project-root ./pipeline-r
 ### 常用安装命令
 
 ```bash
+# 本地源码安装
 node scripts/install.js --platform all,common --scope user          # 全部宿主 + 通用发现点
 node scripts/install.js --platform all --scope project --project-root /path/to/repo   # 团队共享
 node scripts/install.js --platform auto --scope user --link         # 开发模式软链
 node scripts/install.js --platform auto --scope user --force        # 升级覆盖旧版本
 node scripts/install.js --platform all,common --scope user --uninstall
+
+# 从 GitHub 远程安装（无需 clone 源码）
+node scripts/install.js --from-github                               # 下载最新版本安装
+node scripts/install.js --from-github --version 1.0.0               # 下载指定版本
+node scripts/install.js --from-github --platform auto --scope user  # 远程安装到指定宿主
 ```
 
 ### 安装验收
@@ -86,6 +94,31 @@ node scripts/run-pipeline.js --project-name smoke --project-root /tmp/ap-smoke -
 3. `artifacts/`、`logs/`、`data/` 只出现在 `--work-dir`，安装目录保持干净。
 
 各宿主的发现优先级、frontmatter 差异、CLI 方言与已知限制见 [`references/platform-compat.md`](references/platform-compat.md)。
+
+---
+
+## GitHub Release 与远程安装
+
+本技能通过 GitHub Actions 实现自动打包与发布：
+
+### 发布流程
+
+1. **打 tag**：在源码目录执行 `git tag v1.0.0 && git push origin v1.0.0`
+2. **自动打包**：GitHub Actions 触发 `.github/workflows/release.yml`，自动：
+   - 校验 `meta.json` 版本号与 tag 一致
+   - 打包 `agent-pipeline-1.0.0.zip`（排除 `.git/`、`node_modules/` 等）
+   - 创建 GitHub Release 并上传 zip
+3. **用户安装**：
+   - 方式 A（远程）：`node scripts/install.js --from-github --version 1.0.0`
+   - 方式 B（手动）：下载 zip → 解压 → `node scripts/install.js --platform auto --scope user`
+
+### 远程安装原理
+
+`install.js --from-github` 会：
+1. 从 GitHub API 获取最新版本号（或使用 `--version` 指定）
+2. 下载对应 zip 到临时目录
+3. 解压后执行常规安装流程
+4. 安装完成后自动清理临时文件
 
 ---
 
@@ -320,9 +353,12 @@ agent-pipeline/
 ├── README.md                    本文档：面向人的安装、配置与排障
 ├── CHANGELOG.md                 版本历史、待办问题与迭代闭环
 ├── meta.json                    Marvis / WorkBuddy 展示元数据（版本号唯一权威来源）
+├── .github/
+│   └── workflows/
+│       └── release.yml          GitHub Actions：打 tag 时自动打包 zip 并上传到 Release
 ├── config/
 │   ├── cli.json                 适配器、hostCommands、超时、权限
-│   ├── agents.json              6 个子代理角色与模型
+│   ├── agents.json              7 个子代理角色与模型
 │   ├── pipeline.json            主流水线 7 阶段
 │   ├── issue-pipeline.json      Issue 修复流 5 阶段
 │   └── github.json              Issue 监听配置模板
@@ -331,7 +367,7 @@ agent-pipeline/
 │   ├── platform-compat.md       五平台路径、元数据、CLI 差异与验收清单
 │   └── remote-confirm.md        远程确认协议（exit 42 状态文件 schema）
 └── scripts/
-    ├── install.js               一键安装 / 卸载到五个宿主
+    ├── install.js               一键安装 / 卸载到五个宿主，支持 --from-github 远程安装
     ├── version.js               版本号管理 CLI
     ├── run-pipeline.js          主编排器
     ├── req-builder.js           需求构建器

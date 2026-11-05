@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Verify version consistency
+        run: |
+          META_VERSION=$(node -p "require('./meta.json').version")
+          if [ "$META_VERSION" != "${{ steps.version.outputs.VERSION }}" ]; then
+            echo "Version mismatch: meta.json=$META_VERSION, tag=${{ steps.version.outputs.VERSION }}"
+            exit 1
+          fi
+          echo "Version verified: $META_VERSION"
+
+      - name: Create zip archive
+        run: |
+          zip -r "agent-pipeline-${{ steps.version.outputs.VERSION }}.zip" . \
+            -x ".git/*" \
+            -x ".github/*" \
+            -x "node_modules/*" \
+            -x "artifacts/*" \
+            -x "logs/*" \
+            -x "data/*" \
+            -x "pipeline-output/*" \
+            -x "*.zip" \
+            -x ".DS_Store" \
+            -x "Thumbs.db"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ steps.version.outputs.VERSION }}
+          files: agent-pipeline-${{ steps.version.outputs.VERSION }}.zip
+          generate_release_notes: true
