@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 /**
- * CLI 适配层 —— 让流水线编排器运行在任意 agent CLI 之上（零 npm 依赖，Node >= 18）
+ * CLI 适配层 —— 让流水线编排器运行在任意宿主的 agent CLI 之上（零 npm 依赖，Node >= 18）
  *
- * 内置适配器：
- *   codebuddy  CodeBuddy Code CLI（原生 --agent/--agents 多代理、--fallback-model 回退）
+ * 内置适配器（命令行参数方言）：
+ *   codebuddy  CodeBuddy / WorkBuddy CLI（原生 --agent/--agents 多代理、--fallback-model 回退）
  *   claude     Claude Code CLI（--append-system-prompt 注入角色系统提示词）
  *   codex      OpenAI Codex CLI（codex exec 非交互，角色提示词拼入任务头部）
- *   plain      任意自定义命令（config/cli.json 的 plain.command，提示词走参数或 stdin）
+ *   plain      任意自定义命令（宿主默认命令或 plain.command，提示词走参数或 stdin）
  *
- * 选择顺序：环境变量 AGENT_PIPELINE_ADAPTER > cli.json adapter > autoDetect 依次探测。
+ * 宿主与适配器分离：
+ *   host    当前加载 skill 的 IDE（AGENT_PIPELINE_HOST），决定调用哪个 CLI 命令与读哪份模型配置
+ *   adapter 参数方言（AGENT_PIPELINE_ADAPTER / --adapter / cli.json）
+ *   hostCommands 把 workbuddy / zcode / qoder / marvis 映射到方言与默认命令，可在 cli.json 覆盖
+ *
+ * 选择顺序：AGENT_PIPELINE_ADAPTER > --adapter > cli.json adapter > 宿主探测 > autoDetect。
  * 统一接口：
  *   runner.name / label() / probe() / run(opts) / extraModels() / supportsFallbackFlag
  *   run(opts)：opts = { prompt, agentId, agentDef, agentsJson, model, fallbackModel,
@@ -23,11 +28,22 @@ const { spawnSync, execSync } = require('child_process');
 // ---------- 默认配置 ----------
 const DEFAULTS = {
   adapter: 'auto',
-  autoDetect: ['codebuddy', 'cbc', 'claude', 'codex'],
+  host: 'auto',
+  autoDetect: ['codebuddy', 'cbc', 'workbuddy', 'zcode', 'qoder', 'marvis', 'claude', 'codex'],
   timeoutMs: 600000,
   permissions: 'skip',
   outputFormat: 'text',
   plain: { command: '', promptMode: 'arg', extraArgs: [] },
+  // WorkBuddy 内置 CLI 与 CodeBuddy 同源，复用 codebuddy 方言；
+  // zCode / Qoder / Marvis 未提供等价的多代理参数，默认用 plain（角色提示词拼进 prompt）。
+  hostCommands: {
+    codebuddy: { commands: ['codebuddy', 'cbc'], env: 'CODE_BUDDY_CMD', adapter: 'codebuddy', configDir: '.codebuddy' },
+    cbc: { commands: ['cbc'], env: 'CODE_BUDDY_CMD', adapter: 'codebuddy', configDir: '.codebuddy' },
+    workbuddy: { commands: ['workbuddy'], env: 'WORK_BUDDY_CMD', adapter: 'codebuddy', configDir: '.workbuddy' },
+    zcode: { commands: ['zcode'], env: 'ZCODE_CLI_CMD', adapter: 'plain', configDir: '.zcode' },
+    qoder: { commands: ['qoder', 'qoder-cli'], env: 'QODER_CLI_CMD', adapter: 'plain', configDir: '.qoder' },
+    marvis: { commands: ['marvis'], env: 'MARVIS_CLI_CMD', adapter: 'plain', configDir: '.marvis' },
+  },
 };
 
 function loadCliConfig(root, cliConfigPath, overrides) {
@@ -43,6 +59,7 @@ function loadCliConfig(root, cliConfigPath, overrides) {
   }
   const cfg = Object.assign({}, DEFAULTS, fileCfg, ov);
   cfg.plain = Object.assign({}, DEFAULTS.plain, fileCfg.plain || {}, ov.plain || {});
+  cfg.hostCommands = Object.assign({}, DEFAULTS.hostCommands, fileCfg.hostCommands || {}, ov.hostCommands || {});
   return cfg;
 }
 
@@ -103,28 +120,64 @@ function isQuotaError(text) {
   return /quota|rate\s*limit|429|insufficient|overload|limit\s*exceeded|过载|限额|超限|额度不足/i.test(text || '');
 }
 
-// ---------- CodeBuddy 专属：~/.codebuddy/models.json 自定义模型（完整 ID custom-local:<id>） ----------
-function loadCodebuddyCustomModels() {
-  try {
-    const home = process.env.USERPROFILE || process.env.HOME || '';
-    const p = path.join(home, '.codebuddy', 'models.json');
-    if (!fs.existsSync(p)) return [];
-    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
-    return (data.models || []).map((m) => (m.id && m.id.startsWith('custom-local:') ? m.id : 'custom-local:' + m.id));
-  } catch (e) { return []; }
+// ---------- 自定义模型候选：优先读当前宿主配置目录，再回退 CodeBuddy ----------
+function loadCodebuddyCustomModels(cfg) {
+  const home = process.env.USERPROFILE || process.env.HOME || '';
+  const dirs = [];
+  if (cfg && cfg.hostConfigDir) dirs.push(cfg.hostConfigDir);
+  dirs.push('.codebuddy');
+  const out = [];
+  for (const dir of dirs) {
+    const p = path.join(home, dir, 'models.json');
+    if (!fs.existsSync(p)) continue;
+    try {
+      const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+      for (const m of (data.models || [])) {
+        if (!m || !m.id) continue;
+        const id = m.id.startsWith('custom-local:') ? m.id : 'custom-local:' + m.id;
+        if (!out.includes(id)) out.push(id);
+      }
+    } catch (e) { /* 单份配置损坏不影响其余 */ }
+  }
+  return out;
 }
 
-// ---------- 适配器解析 ----------
-function resolveAdapterName(cfg) {
-  const name = process.env.AGENT_PIPELINE_ADAPTER || cfg.adapter;
-  if (name && name !== 'auto') return name;
+// ---------- 宿主与适配器解析 ----------
+// 探测只依据宿主专属环境变量与系统命令；通用 AGENT_CLI_CMD 不参与，
+// 否则一旦设置它，所有宿主都会被误判为可用。
+function resolveHostBin(def) {
+  if (def.env && process.env[def.env]) return process.env[def.env];
+  for (const c of def.commands || []) if (which(c)) return c;
+  return null;
+}
+
+function detectHost(cfg) {
+  const map = cfg.hostCommands || {};
+  const requested = String(process.env.AGENT_PIPELINE_HOST || cfg.host || 'auto').toLowerCase();
+  const pack = (key, def, bin) => ({
+    key, bin, adapter: def.adapter || 'plain', configDir: def.configDir || '',
+  });
+  // 显式声明宿主时即使命令不存在也返回，便于后续给出明确的路径配置提示
+  if (requested !== 'auto' && map[requested]) {
+    return pack(requested, map[requested], resolveHostBin(map[requested]));
+  }
+  for (const cand of cfg.autoDetect || DEFAULTS.autoDetect) {
+    if (!map[cand]) continue;
+    const bin = resolveHostBin(map[cand]);
+    if (bin) return pack(cand, map[cand], bin);
+  }
+  return null;
+}
+
+function resolveAdapterName(cfg, host) {
+  const forced = process.env.AGENT_PIPELINE_ADAPTER || cfg.adapter;
+  if (forced && forced !== 'auto') return forced;
+  if (host) return host.adapter;
   const list = cfg.autoDetect || DEFAULTS.autoDetect;
   for (const cand of list) {
-    if (cand === 'codebuddy' || cand === 'cbc') {
-      if (process.env.CODE_BUDDY_CMD || which('codebuddy') || which('cbc')) return 'codebuddy';
-    } else if (which(cand)) {
-      return cand;
-    }
+    if ((cfg.hostCommands || {})[cand]) continue;
+    if (cand === 'claude' && (process.env.CLAUDE_CLI_CMD || which('claude'))) return 'claude';
+    if (cand === 'codex' && (process.env.CODEX_CLI_CMD || which('codex'))) return 'codex';
   }
   return null;
 }
@@ -137,8 +190,10 @@ function roleHeader(agentDef) {
 }
 
 // ---------- 各适配器 ----------
-function codebuddyRunner() {
+function codebuddyRunner(cfg) {
   function bin() {
+    // 宿主探测命中的命令优先（如 WorkBuddy 的 workbuddy / cbc 别名）
+    if (cfg && cfg.hostBin) return cfg.hostBin;
     const envCmd = process.env.CODE_BUDDY_CMD || process.env.AGENT_CLI_CMD;
     if (envCmd) return envCmd;
     const entry = resolveNodeEntry('@tencent-ai/codebuddy-code', ['codebuddy', 'cbc']);
@@ -163,7 +218,7 @@ function codebuddyRunner() {
     name: 'codebuddy',
     supportsFallbackFlag: true,
     capabilities: { model: true, agents: true },
-    extraModels: loadCodebuddyCustomModels,
+    extraModels: () => loadCodebuddyCustomModels(cfg),
     label() { const b = bin(); return typeof b === 'object' ? `${b.node} ${b.entry}` : b; },
     probe() { return spawnCli(bin(), ['--version'], { timeoutMs: 15000 }); },
     run(o) { return spawnCli(bin(), build(o), { cwd: o.cwd, timeoutMs: o.timeoutMs }); },
@@ -226,9 +281,11 @@ function codexRunner() {
 
 function plainRunner(cfg) {
   const plain = cfg.plain || {};
-  const cmdStr = String(plain.command || '').trim();
+  // 宿主默认命令优先，其次才是用户手填的 plain.command
+  const cmdStr = String(cfg.hostBin || plain.command || '').trim();
   if (!cmdStr) {
-    throw new Error('适配器 plain 需要在 config/cli.json 配置 plain.command（如 "my-agent --run"），或改用自动探测');
+    throw new Error('未找到可用的宿主 agent CLI：请在 config/cli.json 配置 plain.command（如 "my-agent --run"），'
+      + '或设置对应宿主的 *_CLI_CMD 环境变量；当前 host=' + (cfg.hostKey || 'auto'));
   }
   const parts = cmdStr.split(/\s+/);
   const binSpec = parts[0];
@@ -253,11 +310,19 @@ function plainRunner(cfg) {
 
 // ---------- 工厂 ----------
 function createRunner(cfg) {
-  const name = resolveAdapterName(cfg);
+  const host = detectHost(cfg);
+  const name = resolveAdapterName(cfg, host);
   if (!name) {
-    throw new Error('未探测到受支持的 agent CLI（codebuddy/cbc/claude/codex）。'
-      + '请安装其一，或设置环境变量 AGENT_PIPELINE_ADAPTER=plain 并在 config/cli.json 填写 plain.command');
+    throw new Error('未探测到受支持的 agent CLI'
+      + '（codebuddy/cbc/workbuddy/zcode/qoder/marvis/claude/codex）。'
+      + '请安装其一，或设置 AGENT_PIPELINE_HOST / AGENT_PIPELINE_ADAPTER=plain'
+      + ' 并在 config/cli.json 填写 plain.command');
   }
+  // 仅当宿主映射的方言与实际适配器一致时注入宿主命令，
+  // 避免把 plain 方言的命令塞给 codebuddy 参数（或反之）。
+  cfg.hostBin = (host && host.adapter === name) ? host.bin : null;
+  cfg.hostConfigDir = host ? host.configDir : '';
+  cfg.hostKey = host ? host.key : '';
   switch (name) {
     case 'codebuddy': return codebuddyRunner(cfg);
     case 'claude': return claudeRunner(cfg);
@@ -267,4 +332,7 @@ function createRunner(cfg) {
   }
 }
 
-module.exports = { loadCliConfig, createRunner, isQuotaError, spawnCli, which, DEFAULTS };
+module.exports = {
+  loadCliConfig, createRunner, detectHost, resolveAdapterName,
+  isQuotaError, spawnCli, which, DEFAULTS,
+};

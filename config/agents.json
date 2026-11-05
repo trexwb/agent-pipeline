@@ -9,12 +9,10 @@
         "Glob",
         "Write"
       ],
-      "model": "custom-local:glm-5",
+      "model": "auto",
       "effort": "low",
       "maxTurns": 10,
-      "fallbackModels": [
-        "custom-local:ModelScope · DeepSeek V4 Pro"
-      ]
+      "fallbackModels": []
     },
     "architect": {
       "description": "负责系统架构设计、技术选型、模块划分",
@@ -25,12 +23,10 @@
         "Glob",
         "Write"
       ],
-      "model": "custom-local:glm-5",
+      "model": "auto",
       "effort": "high",
       "maxTurns": 12,
-      "fallbackModels": [
-        "custom-local:ModelScope · DeepSeek V4 Pro"
-      ]
+      "fallbackModels": []
     },
     "developer": {
       "description": "负责核心功能开发编码，产出可运行代码",
@@ -43,12 +39,10 @@
         "Edit",
         "Bash"
       ],
-      "model": "custom-local:OC · Big Pickle",
+      "model": "auto",
       "effort": "medium",
       "maxTurns": 40,
-      "fallbackModels": [
-        "custom-local:智谱 · GLM-4.5-Flash"
-      ]
+      "fallbackModels": []
     },
     "code-reviewer": {
       "description": "负责代码审查，输出审查报告",
@@ -59,12 +53,10 @@
         "Glob",
         "Bash"
       ],
-      "model": "custom-local:glm-5",
+      "model": "auto",
       "effort": "high",
       "maxTurns": 15,
-      "fallbackModels": [
-        "custom-local:ModelScope · DeepSeek V4 Pro"
-      ]
+      "fallbackModels": []
     },
     "tester": {
       "description": "负责测试用例设计与执行，输出测试报告",
@@ -77,12 +69,10 @@
         "Edit",
         "Bash"
       ],
-      "model": "custom-local:glm-5",
+      "model": "auto",
       "effort": "medium",
       "maxTurns": 30,
-      "fallbackModels": [
-        "custom-local:ModelScope · DeepSeek V4 Pro"
-      ]
+      "fallbackModels": []
     },
     "devops": {
       "description": "负责构建、部署与运维方案",
@@ -95,13 +85,11 @@
         "Edit",
         "Bash"
       ],
-      "model": "custom-local:glm-5",
+      "model": "auto",
       "effort": "medium",
       "maxTurns": 20,
-      "fallbackModels": [
-        "custom-local:ModelScope · DeepSeek V4 Pro"
-      ]
+      "fallbackModels": []
     }
   },
-  "_comment": "model 取值：auto=交给 CLI 默认选择；或填具体模型 ID / 场景变体（lite/reasoning/default，CodeBuddy 支持）。tools/effort/maxTurns 为 CodeBuddy 适配器使用的字段，其他适配器自动忽略。fallbackModels 在任何适配器下都会触发编排器层的限额自动切换。 [2026-10-16 修复：custom-local 模型服务ID失效(400)，统一改回 auto 交由 CLI 默认模型]"
+  "_comment": "model 取值：auto=交给当前宿主 CLI 默认选择（跨 WorkBuddy/CodeBuddy/zCode/Marvis/Qoder 可移植，默认值）；或填具体模型 ID / 场景变体（lite/reasoning/default，CodeBuddy 方言支持）。tools/effort/maxTurns 仅 codebuddy 方言生效（CodeBuddy / WorkBuddy），其他适配器自动忽略。fallbackModels 按序触发编排器层的限额自动切换，留空表示只使用宿主 models.json 动态发现的候选模型。需要固定模型时不要改安装目录，用 --agents-config 或在 --work-dir 下放同名 config/agents.json 覆盖。"
 }

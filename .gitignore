@@ -147,3 +147,15 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# agent-pipeline 运行时产物（一律写 --work-dir，不进版本库）
+artifacts/
+logs/
+data/
+.confirm-state.json
+.req-state.json
+processed-issues.json
+
+# 安装脚本生成的分发包
+dist/
+*.zip

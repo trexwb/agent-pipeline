@@ -66,7 +66,31 @@ function usage() {
   --pipeline-config <p> 流水线配置路径，默认 config/pipeline.json
   --agents-config <p>   子代理配置路径，默认 config/agents.json
   --cli-config <p>      CLI 适配配置路径，默认 config/cli.json
-  --adapter <name>      强制指定适配器（codebuddy/claude/codex/plain），覆盖配置`);
+  --adapter <name>      强制指定适配器（codebuddy/claude/codex/plain），覆盖配置
+  --timeout-ms <n>      单阶段 CLI 超时毫秒数，覆盖 cli.json 的 timeoutMs
+
+宿主环境变量：
+  AGENT_PIPELINE_HOST      声明当前宿主（workbuddy/codebuddy/zcode/qoder/marvis）
+  AGENT_PIPELINE_ADAPTER   强制适配器，优先级高于 --adapter
+  *_CLI_CMD                覆盖宿主 CLI 路径（CODE_BUDDY_CMD/WORK_BUDDY_CMD/
+                           ZCODE_CLI_CMD/QODER_CLI_CMD/MARVIS_CLI_CMD 等）
+
+演练模式（--dry-run）下若未探测到宿主 CLI，只告警不退出，仍可校验阶段与提示词配置。`);
+}
+
+// 演练占位 runner：本机没有可用 agent CLI 时，仍能校验阶段链、提示词与参数组装
+function dryRunRunner(reason) {
+  return {
+    name: 'plain',
+    placeholder: true,
+    reason,
+    label: () => '<未探测到 agent CLI>',
+    capabilities: { model: false, agents: false },
+    supportsFallbackFlag: false,
+    extraModels: () => [],
+    probe: () => ({ status: 0 }),
+    run: () => ({ status: 1, stderr: reason }),
+  };
 }
 
 // ---------- 主编排 ----------
@@ -119,6 +143,8 @@ function main() {
     if (pipeline.cli.permissions) cliCfg.permissions = pipeline.cli.permissions;
     if (pipeline.cli.outputFormat) cliCfg.outputFormat = pipeline.cli.outputFormat;
   }
+  const timeoutOverride = parseInt(args['timeout-ms'], 10);
+  if (Number.isFinite(timeoutOverride) && timeoutOverride > 0) cliCfg.timeoutMs = timeoutOverride;
 
   const dryRun = !!args['dry-run'];
   const interactive = !!args['interactive'];
@@ -140,20 +166,25 @@ function main() {
   try {
     runner = adapter.createRunner(cliCfg);
   } catch (e) {
-    console.error('错误：' + e.message);
-    process.exit(1);
+    if (!dryRun) { console.error('错误：' + e.message); process.exit(1); }
+    runner = dryRunRunner(e.message); // 告警统一在下方 CLI 探测段输出
   }
 
   // 探测 CLI 可用性（dry-run 也探测，便于提前发现问题；plain 适配器宽松处理）
   const probe = runner.probe();
-  if (probe.error || probe.status !== 0) {
+  if (runner.placeholder) {
+    log(`警告：${runner.reason}；演练模式仅校验阶段与提示词配置`);
+  } else if (probe.error || probe.status !== 0) {
     const detail = String((probe.stderr || '') || (probe.stdout || '') || (probe.error && probe.error.message) || '').trim().slice(0, 300);
     if (runner.name === 'plain') {
       log(`警告：plain 适配器探测未通过（--version），继续尝试执行：${runner.label()}${detail ? '；详情：' + detail : ''}`);
+    } else if (dryRun) {
+      log(`警告：agent CLI 探测未通过（演练模式继续）：${runner.label()}${detail ? '；详情：' + detail.replace(/\n+/g, ' ').trim() : ''}`);
     } else {
       console.error(`错误：agent CLI 不可用（适配器=${runner.name}，命令=${runner.label()}）。`);
       if (detail) console.error('详情：' + detail.replace(/\n+/g, ' ').trim());
-      console.error('请安装对应 CLI 或修复其运行环境，也可通过 config/cli.json / 环境变量 AGENT_PIPELINE_ADAPTER 指定其他适配器');
+      console.error('请安装对应 CLI 或修复其运行环境；也可用 AGENT_PIPELINE_HOST 指定宿主，'
+        + '或通过 config/cli.json / AGENT_PIPELINE_ADAPTER 指定其他适配器');
       process.exit(1);
     }
   } else {

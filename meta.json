@@ -1,14 +1,21 @@
 {
   "name": "agent-pipeline",
-  "display_name": "agent-pipeline",
-  "description": "多 Agent 软件开发流水线编排器：按阶段（产品规划→需求拆解→架构设计→开发编码→代码审查→测试→部署）驱动 CodeBuddy / Claude Code / Codex 等 CLI 协作，支持 GitHub Issue 自动修复循环。",
-  "detail_describe": "把软件开发拆成多个阶段，每阶段由独立子 Agent（角色 + 提示词 + 模型 + 工具白名单）执行\n阶段间通过 artifacts/ 传递产物\n支持人工确认、断点续跑、限额自动切换模型\n工作目录由用户自定义（默认当前目录，可用 --work-dir/--project-root 覆盖）\n经 CLI 适配层兼容 CodeBuddy / Claude Code / Codex / 自定义 agent CLI，零 npm 依赖，跨平台",
-  "display_description": "多 Agent 软件开发流水线编排",
+  "display_name": "多 Agent 开发流水线",
+  "description": "多 Agent 软件开发流水线编排器：从一条需求自动推进到可交付代码，按产品规划→需求拆解→架构设计→开发编码→代码审查→测试→部署七阶段驱动宿主 CLI 协作，并支持 GitHub Issue 自动修复循环。兼容 WorkBuddy / CodeBuddy / zCode / Marvis / Qoder。",
+  "detail_describe": "把软件开发拆成多个阶段，每阶段由独立子 Agent（角色 + 提示词 + 模型 + 工具白名单）执行\n阶段间通过 artifacts/ 传递产物，产物与日志只写 --work-dir，不污染只读的 skill 安装目录\n支持人工确认、远程确认（exit 42）、断点续跑、限额自动切换模型\n需求构建器提供 7 维度引导与 A/B 双版本需求；Issue 监听器提供自动修复闭环\n一键安装到 WorkBuddy / CodeBuddy / zCode / Marvis / Qoder 的用户级与项目级 skills 目录\n经 CLI 适配层按宿主选择命令行方言，零 npm 依赖，跨平台（macOS / Linux / Windows）",
+  "display_description": "从需求到开发完成的多阶段编排",
   "author": "trexwb",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "type": "开发工具",
   "scope": [
     "main"
+  ],
+  "platforms": [
+    "WorkBuddy",
+    "CodeBuddy",
+    "zCode",
+    "Marvis",
+    "Qoder"
   ],
   "source": "https://github.com/trexwb/workflows"
 }

@@ -4,8 +4,9 @@
  *
  * 用法：
  *   node scripts/watch-issues.js --once                    # 单轮检查（配合系统定时任务）
- *   node scripts/watch-issues.js --daemon                  # 常驻监听（每 intervalMs 轮询一次）
+ *   node scripts/watch-issues.js                           # 默认常驻监听（每 intervalMs 轮询一次）
  *   node scripts/watch-issues.js --owner x --repo y --token $GITHUB_TOKEN --dir /path/to/repo --once
+ *   node scripts/watch-issues.js --work-dir /path/to/work --once   # 状态与产物写工作目录
  *
  * 流程：拉取 open issues（按创建时间增量）→ 跳过 PR → 对每个新 issue 调用
  *       run-pipeline.js --pipeline-config config/issue-pipeline.json 执行修复循环
@@ -19,7 +20,9 @@ const { spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const GITHUB_API = 'https://api.github.com';
-const STATE_FILE = path.join(ROOT, 'data', 'processed-issues.json');
+// 状态文件与流水线产物一律写工作目录，避免污染可能是只读的 skill 安装目录
+const STATE_REL = path.join('data', 'processed-issues.json');
+let STATE_FILE = path.resolve(process.cwd(), STATE_REL);
 
 // ---------- 参数与配置 ----------
 function parseArgs(argv) {
@@ -92,12 +95,13 @@ async function fetchOpenIssues(cfg) {
 }
 
 // ---------- 触发修复循环 ----------
-function triggerFixPipeline(cfg, issue) {
+function triggerFixPipeline(cfg, issue, workDir) {
   const projectName = `${cfg.owner}/${cfg.repo}`;
   const issueBody = `Issue #${issue.number}：${issue.title}\n\n${(issue.body || '').slice(0, 8000)}\n\n链接：${issue.html_url}`;
   const args = [
     path.join(ROOT, 'scripts', 'run-pipeline.js'),
     '--pipeline-config', cfg.pipelineConfig,
+    '--work-dir', workDir,
     '--project-name', projectName,
     '--project-dir', cfg.localProjectDir,
     '--from', '01-issue-analysis',
@@ -118,6 +122,8 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cfg = loadConfig(args);
   const once = !!args['once'];
+  const workDir = path.resolve(args['work-dir'] || process.cwd());
+  STATE_FILE = path.join(workDir, STATE_REL);
 
   const state = readState();
   if (!state.lastChecked) {
@@ -138,7 +144,7 @@ async function main() {
 
     for (const issue of fresh) {
       if (cfg.processExisting) {
-        const r = triggerFixPipeline(cfg, issue);
+        const r = triggerFixPipeline(cfg, issue, workDir);
         state.processed[issue.number] = { at: issue.created_at, status: r.status, ts: new Date().toISOString() };
       } else {
         console.log(`[watch] Issue #${issue.number} 为存量，跳过（--process-existing 可处理）`);
