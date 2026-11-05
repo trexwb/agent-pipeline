@@ -147,3 +147,47 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# agent-pipeline 运行时产物（一律写 --work-dir，不进版本库）
+artifacts/
+logs/
+data/
+.confirm-state.json
+.req-state.json
+processed-issues.json
+
+# 安装脚本生成的分发包
+dist/
+*.zip
+
+# mac
+.DS_Store
+
+# 打包产物
+damei-cms.zip
+.pack-temp
+
+# ide & ai local files
+.vscode/
+.idea/
+.qwen
+.cursor
+.marvis/
+.marvis/*
+.workbuddy
+.workbuddy/*
+.trae
+.trae/*
+.codex
+.codex/*
+.dumate
+.dumate/*
+.tmp
+.tmp/*
+.workbuddy
+.workbuddy/*
+.zwork
+.zwork/*
+
+# 测试产物目录（演练或测试时生成）
+pipeline-output/
