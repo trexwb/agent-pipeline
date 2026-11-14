@@ -1,10 +1,10 @@
 # agent-pipeline
 
-多 Agent 软件开发流水线编排器，目标是帮助用户**「从一个想法自动走到部署」**：把用户需求拆成固定阶段，每阶段交由指定角色/模型完成，顺序衔接直至部署。七个阶段为产品规划 → 需求拆解 → 架构设计 → 开发编码 → 代码审查 → 测试 → 部署，阶段间用 `artifacts/` 传递产物；支持人工确认、远程确认、断点续跑、限额自动切换模型，并附带需求构建器与 GitHub Issue 自动修复循环。
+多 Agent 软件开发流水线编排器，目标是帮助用户**「从一个想法自动走到部署」**或**「一条修复需求自动走到可发布修复」**：把用户需求拆成固定阶段，每阶段交由指定角色/模型完成，顺序衔接直至全流程结束。两条流水线：新功能走开发七阶段（产品规划 → 需求拆解 → 架构设计 → 开发编码 → 代码审查 → 测试 → 部署）；功能修复走修复五阶段（`--pipeline fix --requirement "<问题描述>"`，或 GitHub Issue 自动触发），验证不通过自动回炉重修。每个角色自带持久知识库（跨任务可复用经验）、过程记忆（执行摘要/交接便签/用户修订自动入记忆）与动态委托能力（发现本阶段更适合其他角色时自动换人重跑）。阶段间用 `artifacts/` 传递产物；支持人工确认、远程确认、断点续跑、限额自动切换模型，并附带需求构建器。
 
 遵循 **Agent Skills 开放标准**，一份 `SKILL.md` 可部署到 **WorkBuddy / CodeBuddy / zCode / Qoder / Marvis / Claude Code / Codex** 及任意自定义 agent CLI。编排器本身是纯 Node.js 脚本（**Node.js >= 18、零 npm 依赖、macOS / Linux / Windows 通用**），AI 能力来自当前宿主的 agent CLI。技能的完整行为契约（目标、输入、工作流与角色、执行步骤、输出格式、约束）见 [`SKILL.md` 的「技能契约」](SKILL.md#技能契约)。
 
-当前版本：**1.0.0**（唯一权威来源：`meta.json` 的 `version`；用 `node scripts/version.js` 管理，历史见 `CHANGELOG.md`）。
+当前版本：**1.3.0**（唯一权威来源：`meta.json` 的 `version`；用 `node scripts/version.js` 管理，历史见 `CHANGELOG.md`）。
 
 **内容导航**：[快速开始](#1-快速开始) · [安装](#2-安装到五个宿主) · [配置 CLI](#3-配置宿主-cli) · [运行流水线](#4-运行流水线) · [辅助入口](#5-三个辅助入口) · [定制](#6-定制不改动安装目录) · [故障排查](#7-故障排查) · [约定与退出码](#8-运行时约定与退出码) · [目录](#9-目录结构) · [版本管理](#10-版本管理与迭代) · [文档索引](#11-文档索引)
 
@@ -240,6 +240,10 @@ node scripts/run-pipeline.js --project-name demo-app --from 04-develop --amend "
 
 # IDE / 聊天宿主：确认点写状态文件并 exit 42，交给外部转述与收集意见
 node scripts/run-pipeline.js --project-name demo-app --remote --work-dir ./run
+
+# 功能修复：现有功能故障/报错/行为不符，直接描述问题走修复流水线（见下节）
+node scripts/run-pipeline.js --project-name demo-app --project-dir ./demo-app \
+  --pipeline fix --requirement "登录页在 Safari 下提交报错 XXX" --work-dir ./run-fix
 ```
 
 ### 参数速查（`run-pipeline.js`）
@@ -250,11 +254,18 @@ node scripts/run-pipeline.js --project-name demo-app --remote --work-dir ./run
 | `--project-dir` | 代码目录（开发/测试/部署阶段的工作目录） | `<project-root>/<project-name>` |
 | `--project-root` | 项目根目录 | 当前目录 |
 | `--work-dir` | `artifacts/`、`logs/`、状态文件与自定义模板/配置的根 | 当前目录 |
+| `--pipeline feature\|fix` | 流水线预设：开发 7 阶段 / 修复 5 阶段，与 `--pipeline-config` 互斥 | `feature` |
+| `--requirement "<文本>"` | 需求原文写入 `artifacts/00-requirement.md`，作首阶段输入（两条流水线通用） | — |
 | `--from` / `--to` | 起止阶段 id | 首 / 末阶段 |
 | `--interactive` | confirm 阶段暂停审阅，可输入修改意见重跑 | 关闭 |
 | `--remote` | confirm 阶段写 `.confirm-state.json` 并 exit 42 | 关闭 |
 | `--init-only` | 跑到最后一个需确认的阶段即退出 | 关闭 |
 | `--amend "<意见>"` | 修订意见追加进 `--from` 阶段重跑 | — |
+| `--fix-rounds <n>` | 修复验证未通过时自动回炉重修的轮数，`0`=关闭 | 修复流配置默认 `2` |
+| `--knowledge-dir <dir>` | 角色知识库目录（注入历史经验 + 沉淀新知识） | `<work-dir>/knowledge` |
+| `--no-knowledge` | 关闭角色知识库（不注入、不沉淀） | 关闭 |
+| `--no-memory` | 关闭角色记忆（执行摘要/交接便签/用户修订入记忆） | 关闭 |
+| `--no-delegate` | 关闭动态委托（角色声明换更合适角色执行本阶段） | 关闭 |
 | `--dry-run` | 只打印命令，不调用 CLI | 关闭 |
 | `--pipeline-config` / `--agents-config` / `--cli-config` | 配置路径覆盖 | `config/` 下默认值 |
 | `--adapter` | 强制适配器 | `auto` |
@@ -274,7 +285,68 @@ node scripts/run-pipeline.js --project-name demo-app --remote --work-dir ./run
 | 6 测试 | `06-test` | 测试工程师 | `tester` | `artifacts/06-test-report.md` | 否 |
 | 7 部署 | `07-deploy` | 运维工程师 | `devops` | `artifacts/07-deploy.md` | 否 |
 
-`artifacts/00-requirement.md` 是可选的需求输入（由需求构建器生成），缺失时仅告警。每阶段会把 `input` 列出的前序产物全文拼进 prompt；提示词模板要求子 Agent 把文档正文输出到 stdout，由编排器统一落盘，禁止子 Agent 自行写产物文件。信息缺失或需求歧义时的确认规则见 [`SKILL.md` 的「约束」](SKILL.md#约束)。
+`artifacts/00-requirement.md` 是可选的需求输入（由需求构建器或 `--requirement` 生成），缺失时仅告警。每阶段会把 `input` 列出的前序产物全文拼进 prompt；提示词模板要求子 Agent 把文档正文输出到 stdout，由编排器统一落盘，禁止子 Agent 自行写产物文件。信息缺失或需求歧义时的确认规则见 [`SKILL.md` 的「约束」](SKILL.md#约束)。
+
+### 功能修复流水线（`--pipeline fix`）
+
+现有功能出现故障、报错、行为与预期不符时，不必提 GitHub Issue 等监听，直接描述问题走修复 5 阶段（配置 `config/issue-pipeline.json`）：
+
+```bash
+# 交互式：修复方案（阶段 2）产出后暂停确认，y 继续 / 输入修改意见重跑
+node scripts/run-pipeline.js --project-name my-app --project-dir ./my-app \
+  --pipeline fix --requirement "导出 CSV 在 Windows 下中文乱码，复现步骤……" \
+  --work-dir ./run-fix --interactive
+
+# 全自动；验证未通过自动回炉重修，最多 3 轮（--fix-rounds 覆盖默认 2，0=关闭）
+node scripts/run-pipeline.js --project-name my-app --project-dir ./my-app \
+  --pipeline fix --requirement "……" --work-dir ./run-fix --fix-rounds 3
+```
+
+| 序号·阶段 | 阶段 id | 当前执行角色 | agent id | 产物 | 需确认 |
+|-----------|---------|--------------|----------|------|--------|
+| 1 修复需求分析 | `01-issue-analysis` | 代码审查工程师 | `code-reviewer` | `artifacts/issue-analysis.md` | 否 |
+| 2 修复方案设计 | `02-fix-plan` | 架构师 | `architect` | `artifacts/issue-fix-plan.md` | 是 |
+| 3 开发修复 | `03-fix-dev` | 全栈开发工程师 | `developer` | `artifacts/issue-fix-done.md`（代码写入 `--project-dir`） | 否 |
+| 4 修复验证 | `04-fix-test` | 测试工程师 | `tester` | `artifacts/issue-test-report.md`（末行 `VERDICT: PASS\|FAIL`） | 否 |
+| 5 PR 描述 | `05-pr-summary` | 运维工程师 | `devops` | `artifacts/issue-pr.md` | 否 |
+
+- 需求原文由 `--requirement` 写入 `artifacts/00-requirement.md`，作为阶段 1 的输入；`--from <阶段> --amend "<意见>"` 断点重跑同样适用。
+- **自动回炉**：阶段 4 报告末行标记 `VERDICT: FAIL` 且轮数未用尽时，编排器自动携带验证报告回到阶段 3 重修（`config/issue-pipeline.json` 的 `retry` 块控制检查阶段、失败标记与回炉点，默认最多 2 轮）；轮数用尽则如实推进并在日志中注明。
+
+### 角色知识库、记忆与动态委托
+
+每个角色默认同时具备三种持久能力，同一工作目录下的重复运行持续积累：
+
+| 能力 | 存什么 | 位置 | 开关 |
+|------|--------|------|------|
+| **知识库** | 跨任务可复用的事实经验（项目约定、踩坑解法、有效命令） | `knowledge/<agent-id>.md` | `--no-knowledge`；角色 `knowledge: false` |
+| **记忆** | 任务过程上下文（执行摘要、交接便签、用户修订意见） | `memory/<agent-id>.md` + `memory/handoffs.md` | `--no-memory`；角色 `memory: false` |
+| **动态委托** | 角色间换手：本阶段更适合谁就由谁执行 | （运行时机制，无文件） | `--no-delegate` |
+
+**知识库**：执行时把该角色历史知识（末尾最近 4000 字符）拼进 prompt；角色在回复末尾以 `KNOWLEDGE APPEND` 标记段输出新经验，编排器抽取沉淀、产物自动剥离。`--knowledge-dir` 指向固定目录可跨项目共享。
+
+**记忆**：执行阶段时自动带出 `[工作记忆·本阶段]`（该角色上次执行本阶段的摘要、用户曾给的修订意见）与 `[工作记忆·前序阶段交接]`（其他角色写给后续阶段的便签）——断点续跑、`--from` 重跑、修订后重跑不再失忆。沉淀双通道：角色输出 `MEMORY APPEND` 段（`summary:` 执行摘要 → `memory/<agent-id>.md`；`handoff:` 交接提示 → `memory/handoffs.md`）；**用户修订意见（交互 amend / `--amend` / 回炉报告）由编排器自动记入记忆**，重跑同阶段自动提醒「用户曾要求…」。
+
+```text
+阶段 N 执行                             阶段 N 完成
+prompt ←─ memory/<角色>.md(本阶段历史)    MEMORY 段 summary/handoff
+        ←─ memory/handoffs.md(前序交接)      ↓ 抽取沉淀
+        ←─ knowledge/<角色>.md(历史经验)    memory/<角色>.md + handoffs.md
+                                           (供阶段 N+1 注入)
+用户 amend 意见 ──编排器自动──→ memory/<角色>.md
+```
+
+**动态委托**：角色执行中发现本阶段更适合其他角色时，回复末尾输出：
+
+```text
+===== DELEGATE =====
+target: architect
+reason: 本需求实为数据库 schema 调整，超出产品规划专长
+handoff: 用户要求保留存量表结构，初步分析见正文
+===== DELEGATE END =====
+```
+
+编排器自动换 `target` 角色重跑本阶段：原角色的初步产出与交接说明作为上下文带入，知识/记忆沉淀与产物归属最终执行者，日志记录委托链。边界：只能委托给 `agents.json` 内角色；每阶段最多换一次执行角色（防 A→B→A 循环）；**只换执行者，不改变阶段顺序、产物路径与验收要求**。
 
 ### 确认机制
 
@@ -307,9 +379,9 @@ node scripts/req-builder.js --select A --auto-run --project-name demo-app --work
 | `token` | PAT，留空时读 `GITHUB_TOKEN` |
 | `localProjectDir` | 本地仓库路径（必须已存在） |
 | `intervalMs` | 轮询间隔，默认 300000 |
-| `pipelineConfig` | 默认 `config/issue-pipeline.json` |
+| `pipelineConfig` | 修复流水线配置，默认 `config/issue-pipeline.json`（非默认值时以 `--pipeline-config` 传入） |
 | `processExisting` | 是否处理存量 Issue，默认 `false` |
-| `maxFixRounds` | 最大修复轮数，默认 2 |
+| `maxFixRounds` | 验证未通过时自动回炉重修的最大轮数（透传 `--fix-rounds`），默认 2 |
 
 ```bash
 export GITHUB_TOKEN=ghp_xxx
@@ -317,7 +389,7 @@ node scripts/watch-issues.js --once --work-dir ./run       # 单轮，适合 cro
 node scripts/watch-issues.js --work-dir ./run              # 默认常驻轮询（不带 --once 即常驻）
 ```
 
-首次运行只建立基线、不处理存量 Issue。修复流五阶段：Issue 分析 → 修复方案 → 修复开发 → 修复验证 → PR 描述，产物为 `artifacts/issue-*.md`。状态文件与流水线产物都写在 `--work-dir`。
+首次运行只建立基线、不处理存量 Issue。每个新 Issue 触发一次修复流水线（`--pipeline fix`，Issue 原文经 `--requirement` 注入）：Issue 分析 → 修复方案 → 修复开发 → 修复验证 → PR 描述；验证报告末行 `VERDICT: FAIL` 时自动回炉重修（≤ `maxFixRounds` 轮）。**每个 Issue 的产物写在自己的 `<work-dir>/issue-<N>/artifacts/` 下**，互不覆盖；监听状态文件 `data/processed-issues.json` 仍在 `--work-dir` 根。
 
 ### 拉取项目代码
 
@@ -338,10 +410,15 @@ node scripts/init-project.js --url git@github.com:org/repo.git --name demo-app -
 <work-dir>/
 ├── config/
 │   ├── pipeline.json        # 增删阶段、调整 confirm / input / output
-│   ├── agents.json          # 角色提示词、模型、fallbackModels
+│   ├── agents.json          # 角色提示词、模型、fallbackModels、knowledge 开关
 │   └── cli.json             # 适配器、hostCommands、超时、权限
 ├── prompts/
 │   └── 04-develop.md        # 覆盖单个阶段提示词
+├── knowledge/               # 角色知识库（追加式，可人工修剪）
+│   └── developer.md
+├── memory/                  # 角色记忆（任务过程上下文）
+│   ├── developer.md         #   执行摘要 + 用户修订记录（按阶段分段）
+│   └── handoffs.md          #   阶段间交接便签
 └── artifacts/               # 产物
 ```
 

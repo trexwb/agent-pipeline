@@ -9,8 +9,10 @@
  *   node scripts/watch-issues.js --work-dir /path/to/work --once   # 状态与产物写工作目录
  *
  * 流程：拉取 open issues（按创建时间增量）→ 跳过 PR → 对每个新 issue 调用
- *       run-pipeline.js --pipeline-config config/issue-pipeline.json 执行修复循环
- *       （01 分析 → 02 方案 → 03 修复 → 04 验证 → 05 PR 描述）
+ *       run-pipeline.js --pipeline fix 执行修复循环
+ *       （01 分析 → 02 方案 → 03 修复 → 04 验证 → 05 PR 描述），
+ *       Issue 原文经 --requirement 写入该 issue 专属工作目录（<work-dir>/issue-<N>/），
+ *       产物互不覆盖；验证未通过时由编排器按 --fix-rounds 自动回炉重修。
  */
 'use strict';
 
@@ -98,17 +100,23 @@ async function fetchOpenIssues(cfg) {
 function triggerFixPipeline(cfg, issue, workDir) {
   const projectName = `${cfg.owner}/${cfg.repo}`;
   const issueBody = `Issue #${issue.number}：${issue.title}\n\n${(issue.body || '').slice(0, 8000)}\n\n链接：${issue.html_url}`;
+  // 每个 issue 一个专属工作目录，产物 artifacts/issue-*.md 与断点续跑状态互不覆盖
+  const issueWorkDir = path.join(workDir, `issue-${issue.number}`);
   const args = [
     path.join(ROOT, 'scripts', 'run-pipeline.js'),
-    '--pipeline-config', cfg.pipelineConfig,
-    '--work-dir', workDir,
+    // github.json 配置了非默认流水线配置时沿用其路径，否则用 fix 预设
+    ...(cfg.pipelineConfig && cfg.pipelineConfig !== 'config/issue-pipeline.json'
+      ? ['--pipeline-config', cfg.pipelineConfig]
+      : ['--pipeline', 'fix']),
+    '--work-dir', issueWorkDir,
     '--project-name', projectName,
     '--project-dir', cfg.localProjectDir,
-    '--from', '01-issue-analysis',
-    '--to', '05-pr-summary',
-    '--amend', issueBody,
+    '--requirement', issueBody,
   ];
-  console.log(`[watch] Issue #${issue.number} → 触发修复循环`);
+  if (Number.isFinite(cfg.maxFixRounds) && cfg.maxFixRounds > 0) {
+    args.push('--fix-rounds', String(cfg.maxFixRounds));
+  }
+  console.log(`[watch] Issue #${issue.number} → 触发修复循环（工作目录 ${path.relative(workDir, issueWorkDir) || issueWorkDir}）`);
   const result = spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 0, maxBuffer: 64 * 1024 * 1024 });
   if (result.status === 0) return { status: 'ok' };
   console.error(`[watch] Issue #${issue.number} 处理失败：exit=${result.status}`);

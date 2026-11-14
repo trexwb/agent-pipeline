@@ -54,6 +54,43 @@ node scripts/install.js --platform auto --scope user --force
 <!-- 用 node scripts/version.js note "问题描述" 追加 -->
 <!-- NOTES:END -->
 
+## [1.3.0] - 2026-11-13
+
+> 新增角色过程记忆(执行摘要/交接便签/用户修订自动入记忆,重跑带出)与动态委托(DELEGATE 标记段换更合适角色重跑本阶段,每阶段最多一次)
+
+### Added
+- 角色过程记忆（与知识库互补，`--no-memory` 关闭，目录 `<work-dir>/memory/`）：执行阶段时自动注入 `[工作记忆·本阶段]`（该角色上次执行本阶段的摘要与用户曾给的修订意见）与 `[工作记忆·前序阶段交接]`（其他角色写给后续阶段的便签）——断点续跑、`--from` 重跑、修订后重跑不再失忆；角色输出 `MEMORY APPEND` 段沉淀 `summary:`（执行摘要 → `memory/<agent-id>.md`）与 `handoff:`（交接提示 → `memory/handoffs.md`）；用户修订意见（交互 amend / `--amend` / 回炉报告）由编排器自动记入记忆
+- 动态委托（`--no-delegate` 关闭）：角色执行中发现本阶段更适合其他角色时输出 `DELEGATE` 标记段（target/reason/handoff），编排器自动换目标角色重跑本阶段，原角色初步产出与交接说明作为上下文带入，知识/记忆沉淀与产物归属最终执行者；每阶段最多换一次执行角色（防 A→B→A 循环），只换执行者、不改变阶段顺序/产物路径/验收要求
+- `config/agents.json` 每个角色新增 `memory` 开关（默认 `true`，`false` 按角色关闭）；注入块统一为「角色协作上下文」（记忆 + 知识库 + 标记段协议一次注入）
+
+### Fixed
+- 修复 SKILL.md 中 `### 执行步骤` 标题重复出现的问题（1.2.0 编辑遗留）
+
+## [1.2.0] - 2026-11-13
+
+> 新增角色知识库：执行时注入历史经验、完成后自动沉淀可复用知识（KNOWLEDGE 标记段抽取），项目级默认目录，--knowledge-dir/--no-knowledge 控制
+
+### Added
+- `run-pipeline.js` 新增角色知识库（默认开启）：每阶段执行时把该角色 `knowledge/<agent-id>.md` 末尾最近 4000 字符历史经验注入 prompt；角色在回复末尾以 `KNOWLEDGE APPEND` 标记段输出新学条目，编排器抽取后带「时间｜项目｜阶段」元数据头追加进知识库，产物文档自动剥离该段——零额外 CLI 调用，开发/修复两条流水线与 watch-issues 自动继承
+- `run-pipeline.js` 新增 `--knowledge-dir <dir>`（默认 `<work-dir>/knowledge`，指向固定目录可跨项目共享角色能力）与 `--no-knowledge`（全局关闭）
+- `config/agents.json` 每个角色新增 `knowledge` 开关（默认 `true`，`false` 按角色关闭注入与沉淀）
+- SKILL.md 技能契约新增「角色知识库」小节与「知识库安全」约束（只沉淀可复用事实经验，严禁密钥/token/敏感路径）；README 新增「角色知识库」章节与目录说明
+
+## [1.1.0] - 2026-11-13
+
+> 新增功能修复需求编排：--pipeline fix 快捷入口、--requirement 需求注入、验证未通过自动回炉重修（--fix-rounds）、watch-issues 按 issue 隔离产物并改用正式参数传递
+
+### Added
+- `run-pipeline.js` 新增 `--pipeline feature|fix` 流水线预设（与 `--pipeline-config` 互斥），修复需求不再依赖 GitHub Issue 监听即可编排
+- `run-pipeline.js` 新增 `--requirement "<文本>"`：需求原文写入 `artifacts/00-requirement.md` 作首阶段输入，开发/修复两条流水线通用
+- 修复流水线自动回炉：`config/issue-pipeline.json` 新增顶层 `retry` 块（checkStage/failPattern/resumeStage/maxRounds），验证产物末行 `VERDICT: FAIL` 且轮数未用尽时自动携带验证报告回「开发修复」重修；`--fix-rounds` 覆盖轮数，`0`=关闭
+- `02-fix-plan`（修复方案设计）增加 `confirm: true`，`--interactive`/`--remote` 下方案先确认再动代码
+- SKILL.md 技能契约扩展为双流水线：新增需求路由规则（修复类需求走修复流水线）、修复流 5 阶段角色表与输出格式模板
+
+### Changed
+- `watch-issues.js` 触发修复流水线改用 `--pipeline fix --requirement`（原 `--amend` hack 移除）；每个 Issue 的产物写独立 `<work-dir>/issue-<N>/`，互不覆盖；`github.json` 的 `maxFixRounds` 透传为 `--fix-rounds`（此前配置了但从未实现）
+- `prompts/issue-01-analysis.md` 输入源改为上下文输入 `artifacts/00-requirement.md`（兼容 Issue 原文与用户直接描述）；`prompts/issue-04-fix-test.md` 要求报告末行输出 `VERDICT: PASS|FAIL` 结论标记
+
 ## [1.0.0] - 2026-11-05
 
 > 重置版本线，从 1.0.0 重新迭代

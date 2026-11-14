@@ -12,7 +12,9 @@
       "model": "auto",
       "effort": "low",
       "maxTurns": 10,
-      "fallbackModels": []
+      "fallbackModels": [],
+      "knowledge": true,
+      "memory": true
     },
     "requirement-analyst": {
       "description": "需求拆解与功能点呈现专员：负责需求拆解与功能点呈现，产出任务清单",
@@ -26,7 +28,9 @@
       "model": "auto",
       "effort": "low",
       "maxTurns": 10,
-      "fallbackModels": []
+      "fallbackModels": [],
+      "knowledge": true,
+      "memory": true
     },
     "architect": {
       "description": "架构师：负责系统架构设计、技术选型、模块划分",
@@ -40,7 +44,9 @@
       "model": "auto",
       "effort": "high",
       "maxTurns": 12,
-      "fallbackModels": []
+      "fallbackModels": [],
+      "knowledge": true,
+      "memory": true
     },
     "developer": {
       "description": "全栈开发工程师：负责核心功能开发编码，产出可运行代码",
@@ -56,7 +62,9 @@
       "model": "auto",
       "effort": "medium",
       "maxTurns": 40,
-      "fallbackModels": []
+      "fallbackModels": [],
+      "knowledge": true,
+      "memory": true
     },
     "code-reviewer": {
       "description": "代码审查工程师：负责代码审查，输出审查报告",
@@ -70,7 +78,9 @@
       "model": "auto",
       "effort": "high",
       "maxTurns": 15,
-      "fallbackModels": []
+      "fallbackModels": [],
+      "knowledge": true,
+      "memory": true
     },
     "tester": {
       "description": "测试工程师：负责测试用例设计与执行，输出测试报告",
@@ -86,7 +96,9 @@
       "model": "auto",
       "effort": "medium",
       "maxTurns": 30,
-      "fallbackModels": []
+      "fallbackModels": [],
+      "knowledge": true,
+      "memory": true
     },
     "devops": {
       "description": "运维工程师：负责构建、部署与运维方案",
@@ -102,8 +114,10 @@
       "model": "auto",
       "effort": "medium",
       "maxTurns": 20,
-      "fallbackModels": []
+      "fallbackModels": [],
+      "knowledge": true,
+      "memory": true
     }
   },
-  "_comment": "7 个角色与 config/pipeline.json 的 7 个阶段一一对应，角色名与 SKILL.md 技能契约一致；01 与 02 不再共用角色。model 取值：auto=交给当前宿主 CLI 默认选择（跨宿主可移植，默认值）；或填具体模型 ID / 场景变体（lite/reasoning/default，CodeBuddy 方言支持）。tools/effort/maxTurns 仅 codebuddy 方言生效（CodeBuddy / WorkBuddy），其他适配器自动忽略。fallbackModels 按序触发编排器层的限额自动切换，留空表示只使用宿主 models.json 动态发现的候选模型。需要固定模型时不要改安装目录，用 --agents-config 或在 --work-dir 下放同名 config/agents.json 覆盖。"
+  "_comment": "7 个角色与 config/pipeline.json 的 7 个阶段一一对应，角色名与 SKILL.md 技能契约一致；01 与 02 不再共用角色。model 取值：auto=交给当前宿主 CLI 默认选择（跨宿主可移植，默认值）；或填具体模型 ID / 场景变体（lite/reasoning/default，CodeBuddy 方言支持）。tools/effort/maxTurns 仅 codebuddy 方言生效（CodeBuddy / WorkBuddy），其他适配器自动忽略。fallbackModels 按序触发编排器层的限额自动切换，留空表示只使用宿主 models.json 动态发现的候选模型。knowledge=true（默认）启用角色知识库：执行时注入 knowledge/<agent>.md 历史经验、完成后沉淀新知识；false 按角色关闭，运行时 --no-knowledge 全局关闭。memory=true（默认）启用角色记忆：执行时注入 memory/ 中本阶段历史摘要与前序交接便签，完成后沉淀执行摘要，用户修订意见自动入记忆；false 按角色关闭，运行时 --no-memory 全局关闭。动态委托为角色间协议（DELEGATE 标记段），任意角色均可发起/接手，--no-delegate 全局关闭。需要固定模型时不要改安装目录，用 --agents-config 或在 --work-dir 下放同名 config/agents.json 覆盖。"
 }
