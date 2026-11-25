@@ -119,6 +119,10 @@ function triggerFixPipeline(cfg, issue, workDir) {
   console.log(`[watch] Issue #${issue.number} → 触发修复循环（工作目录 ${path.relative(workDir, issueWorkDir) || issueWorkDir}）`);
   const result = spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 0, maxBuffer: 64 * 1024 * 1024 });
   if (result.status === 0) return { status: 'ok' };
+  if (result.status === 42) {
+    console.error(`[watch] Issue #${issue.number} 等待人工决策：${path.join(issueWorkDir, 'artifacts', 'pm-escalation.json')}`);
+    return { status: 'awaiting-human' };
+  }
   console.error(`[watch] Issue #${issue.number} 处理失败：exit=${result.status}`);
   if (result.stderr) console.error((result.stderr || '').slice(-2000));
   if (result.stdout) console.error('日志尾部：' + (result.stdout || '').slice(-2000));

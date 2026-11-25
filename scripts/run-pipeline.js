@@ -5,22 +5,15 @@
  * 用法：
  *   node scripts/run-pipeline.js --project-name demo-app [--dry-run]
  *   node scripts/run-pipeline.js --project-name demo-app --from 04-develop --to 06-test
- *   node scripts/run-pipeline.js --project-name demo-app --interactive          # 交互引导（confirm 阶段暂停审阅）
- *   node scripts/run-pipeline.js --project-name demo-app --remote               # 远程确认（confirm 后写状态文件并 exit 42）
+ *   node scripts/run-pipeline.js --project-name demo-app --interactive          # 项目经理升级人工时终端应答
+ *   node scripts/run-pipeline.js --project-name demo-app --resume-human <id> --amend "人工决定"
  *   node scripts/run-pipeline.js --project-name demo-app --from 03-architecture --amend "修订意见"
  *   node scripts/run-pipeline.js --project-name demo-app --project-dir ./app \
  *     --pipeline fix --requirement "登录页 Safari 下提交报错"                    # 修复流水线（5 阶段）
  *
- * 原理：按所选流水线（--pipeline feature|fix，或 --pipeline-config 指定配置）阶段顺序，
- *       每阶段经适配器（codebuddy/claude/codex/plain）调用一次 agent CLI，
- *       组装 prompt（模板 + 前序产物上下文 + 修订意见）→ 执行 → 产物落盘 artifacts/；
- *       配置含 retry 块时，验证阶段产物命中失败标记自动回炉重修（--fix-rounds 覆盖轮数）；
- *       角色知识库（默认开启）：执行时注入该角色历史经验，完成后从回复末尾抽取
- *       KNOWLEDGE APPEND 标记段沉淀新知识（--knowledge-dir 指定目录，--no-knowledge 关闭）；
- *       角色记忆（默认开启）：任务过程上下文（执行摘要/交接便签/用户修订意见自动入记忆），
- *       重跑同阶段自动带出，写在 <work-dir>/memory/（--no-memory 关闭）；
- *       动态委托（默认开启）：角色可声明本阶段更适合其他角色执行（DELEGATE 标记段），
- *       编排器自动换目标角色重跑本阶段，每阶段最多一次（--no-delegate 关闭）。
+ * 原理：专业阶段经适配器调用 agent CLI，输出正文 + REPORT；项目经理派活/验收并输出 DECISION，
+ *       编排器执行继续、返工、退回上游、人工升级或最终验收；旧配置回退人工确认/自动回炉。
+ *       角色知识库、记忆与动态委托默认开启；项目经理门禁禁止委托。
  * 可移植性：零 npm 依赖；路径全部相对 skill 根或 --work-dir；无平台硬编码；
  *          --work-dir 可把产物/日志/自定义模板与 config 放到任意工作目录。
  */
@@ -30,6 +23,8 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const adapter = require('./lib/adapter');
+const managerProtocol = require('./lib/manager-protocol');
+const managerRouter = require('./lib/manager-router');
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -82,11 +77,12 @@ function usage() {
                         （新功能需求与修复需求通用；已有该文件时会被覆盖）
   --from <stageId>      起始阶段 id，默认第一个阶段
   --to <stageId>        结束阶段 id，默认最后一个阶段
-  --interactive         交互模式：confirm 阶段产出后暂停审阅，可输入修订意见重跑
-  --remote              远程确认模式：confirm 阶段产出后写 artifacts/.confirm-state.json 并 exit 42
-  --init-only           只跑前置段（到最后一个需确认的阶段）即退出
+  --interactive         项目经理升级人工时终端应答；旧配置用于 confirm 阶段审阅
+  --remote              旧配置 confirm 阶段远程确认；项目经理升级始终支持非交互退出
+  --init-only           旧配置到最后一个 confirm 阶段；项目经理模式到本次范围内最后一个 confirm 阶段
   --amend "<意见>"      把修订意见追加进 --from 指定阶段重新生成产物
-  --fix-rounds <n>      修复回炉轮数，覆盖流水线配置 retry.maxRounds；0=关闭回炉
+  --resume-human <id>   读取 pm-escalation.json 中对应决策包，携 --amend 恢复项目经理模式
+  --fix-rounds <n>      仅旧配置修复回炉轮数，覆盖 retry.maxRounds；0=关闭回炉
   --knowledge-dir <dir> 角色知识库目录（执行时注入历史经验、完成后沉淀新知识），
                         默认 <work-dir>/knowledge；指向固定目录可跨项目积累
   --no-knowledge        关闭角色知识库（不注入、不沉淀）
@@ -225,7 +221,7 @@ function main() {
     const proto = [];
     if (opts.knowledgeOn) proto.push(`- 知识沉淀（本次获得可复用经验时）：\n===== KNOWLEDGE APPEND =====\n- 一行一条，写具体、可执行\n===== KNOWLEDGE END =====`);
     if (opts.memoryOn) proto.push(`- 记忆沉淀（记录本次执行过程）：\n===== MEMORY APPEND =====\nsummary: <一句话本次执行摘要>\nhandoff: <给后续阶段的交接提示，可省略此行>\n===== MEMORY END =====`);
-    if (delegateOn) proto.push(`- 动态委托（仅当你判断本阶段更适合其他角色执行时）：\n===== DELEGATE =====\ntarget: <agents.json 内的角色 id，如 architect>\nreason: <为什么目标角色更合适>\nhandoff: <给目标角色的交接说明>\n===== DELEGATE END =====`);
+    if (opts.delegateOn) proto.push(`- 动态委托（仅当你判断本阶段更适合其他角色执行时）：\n===== DELEGATE =====\ntarget: <agents.json 内的角色 id，如 architect>\nreason: <为什么目标角色更合适>\nhandoff: <给目标角色的交接说明>\n===== DELEGATE END =====`);
     block += `\n【标记段协议（附在回复正文全部结束之后，不计入产物文档；均为可选，没有则省略；严禁写入密钥/token/敏感路径）】\n`
       + proto.join('\n');
     return block;
@@ -277,11 +273,11 @@ function main() {
   }
 
   // 用户修订意见自动入记忆（交互 amend / --amend / 回炉验证报告），重跑同阶段自动带出
-  function appendMemoryEvent(stage, amendText) {
+  function appendMemoryEvent(stage, amendText, source = '用户修订') {
     fs.mkdirSync(memoryDir, { recursive: true });
     const flat = amendText.replace(/\n+/g, ' ');
     const short = flat.length > 500 ? flat.slice(0, 500) + '…（截断）' : flat;
-    fs.appendFileSync(path.join(memoryDir, `${stage.agent}.md`), `## ${new Date().toISOString()}｜${stage.id}\n- 用户修订：${short}\n`);
+    fs.appendFileSync(path.join(memoryDir, `${stage.agent}.md`), `## ${new Date().toISOString()}｜${stage.id}\n- ${source}：${short}\n`);
   }
 
   // 抽取：解析 DELEGATE 标记段的 target / reason / handoff
@@ -343,13 +339,104 @@ function main() {
   const amend = args['amend'] || null;
 
   const stages = pipeline.stages;
-  const fromId = args['from'] || stages[0].id;
+  let managerCfg = null;
+  let managerState = null;
+  let managerStateFile = null;
+  let managerKickoff = false;
+  let managerResumeWorkOrder = null;
+  let fromId = args['from'] || stages[0].id;
   const toId = args['to'] || stages[stages.length - 1].id;
-  const startIdx = stages.findIndex((s) => s.id === fromId);
+  let startIdx = stages.findIndex((s) => s.id === fromId);
   const endIdx = stages.findIndex((s) => s.id === toId);
   if (startIdx === -1 || endIdx === -1 || startIdx > endIdx) {
     console.error(`错误：阶段范围无效 from=${fromId} to=${toId}，可用阶段：${stages.map((s) => s.id).join(', ')}`);
     process.exit(1);
+  }
+
+  if (pipeline.projectManager && pipeline.projectManager.enabled) {
+    managerCfg = Object.assign({
+      kickoff: true,
+      maxReworkRounds: 2,
+      maxTotalReworks: 6,
+      stateFile: 'artifacts/pm-project-state.json',
+      handoffOutput: 'artifacts/pm-handoff.md',
+      decisionLog: 'artifacts/pm-decisions.md',
+      escalationState: 'artifacts/pm-escalation.json',
+      acceptanceOutput: 'artifacts/99-acceptance.md',
+    }, pipeline.projectManager);
+    for (const key of ['agent', 'promptFile', 'stateFile', 'handoffOutput', 'decisionLog', 'escalationState', 'acceptanceOutput']) {
+      if (typeof managerCfg[key] !== 'string' || !managerCfg[key]) {
+        console.error(`错误：projectManager.${key} 必须是非空字符串。`);
+        process.exit(1);
+      }
+    }
+    if (!agentsConfig.agents[managerCfg.agent]) {
+      console.error(`错误：agents.json 未找到项目经理角色 ${managerCfg.agent}。`);
+      process.exit(1);
+    }
+    if (!Number.isInteger(managerCfg.maxReworkRounds) || managerCfg.maxReworkRounds < 0
+      || !Number.isInteger(managerCfg.maxTotalReworks) || managerCfg.maxTotalReworks < 0) {
+      console.error('错误：项目经理返工预算必须是非负整数。');
+      process.exit(1);
+    }
+    managerStateFile = resolveWork(managerCfg.stateFile);
+    const expected = { projectName, projectDir, pipelineConfigRel };
+    const existing = managerRouter.loadState(managerStateFile, expected);
+    if (existing && args.requirement === undefined && args.from === undefined) {
+      managerState = existing;
+      managerResumeWorkOrder = existing.nextWorkOrder || null;
+      if (args['resume-human']) {
+        const pending = managerState.pending;
+        if (!pending || pending.decisionId !== args['resume-human']) {
+          console.error('错误：--resume-human 的决策 ID 与当前待处理升级包不匹配。');
+          process.exit(1);
+        }
+        if (!amend) {
+          console.error('错误：--resume-human 必须同时提供 --amend "<人工决策原文>"。');
+          process.exit(1);
+        }
+        if (pending.reasonType === 'rework-budget') managerRouter.approveExtraRework(managerState);
+        managerResumeWorkOrder = pending.workOrder || null;
+        managerState.pending = null;
+        managerState.status = 'running';
+        managerState.resumeStageId = pending.resumeStageId;
+        const escalationFile = resolveWork(managerCfg.escalationState);
+        fs.writeFileSync(escalationFile, JSON.stringify({
+          projectName,
+          action: 'resolved',
+          decisionId: pending.decisionId,
+          humanResponse: amend,
+          resolvedAt: new Date().toISOString(),
+        }, null, 2) + '\n');
+      }
+      const resumeIdx = stages.findIndex((stage) => stage.id === managerState.resumeStageId);
+      if (managerState.status === 'complete') {
+        log(`项目经理模式：项目已完成，验收单见 ${managerCfg.acceptanceOutput}；使用 --from <阶段> 可重新执行指定范围。`);
+        process.exit(0);
+      }
+      if (managerState.pending) {
+        startIdx = resumeIdx;
+      } else if (resumeIdx !== -1) {
+        startIdx = resumeIdx;
+      }
+      if (startIdx === -1 || startIdx > endIdx) {
+        console.error(`错误：项目经理恢复阶段 ${managerState.resumeStageId} 不在本次执行范围内。`);
+        process.exit(1);
+      }
+      fromId = stages[startIdx].id;
+    } else {
+      managerState = managerRouter.freshState(projectName, projectDir, pipelineConfigRel, stages[startIdx].id, managerCfg);
+      managerRouter.invalidateFrom(managerState, stages, startIdx);
+      managerKickoff = !!managerCfg.kickoff && startIdx === 0;
+    }
+    if (!dryRun) {
+      managerRouter.saveState(managerStateFile, managerState);
+      const escalationFile = resolveWork(managerCfg.escalationState);
+      if (!managerState.pending && fs.existsSync(escalationFile)) {
+        fs.writeFileSync(escalationFile, JSON.stringify({ projectName, action: 'idle', updatedAt: new Date().toISOString() }, null, 2) + '\n');
+      }
+    }
+    log(`项目经理模式已启用：角色=${managerCfg.agent}，单阶段返工≤${managerCfg.maxReworkRounds}，总返工≤${managerCfg.maxTotalReworks}`);
   }
 
   let runner;
@@ -430,9 +517,331 @@ function main() {
     }
   }
 
+  function persistManagerState() {
+    if (!dryRun) managerRouter.saveState(managerStateFile, managerState);
+  }
+
+  function writeHandoff(decision, stage) {
+    const file = resolveWork(managerCfg.handoffOutput);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `# 项目经理任务书\n\n目标阶段：${stage.id}（${stage.name}）\n\n${managerProtocol.formatWorkOrder(decision.workOrder)}\n`);
+  }
+
+  function appendDecisionLog(mode, stage, decision, body) {
+    const file = resolveWork(managerCfg.decisionLog);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const heading = mode === 'dispatch' ? '启动派活' : `阶段验收 ${stage.id}（${stage.name}）`;
+    fs.appendFileSync(file, `\n## ${new Date().toISOString()}｜${heading}｜${decision.verdict}\n\n${body || decision.reason}\n`);
+  }
+
+  function runManagerGate(mode, currentStage, targetStage, stageResult) {
+    const gateStage = {
+      id: mode === 'dispatch' ? 'pm-dispatch' : `pm-review-${currentStage.id}`,
+      name: mode === 'dispatch' ? '项目经理启动派活' : '项目经理阶段验收',
+      agent: managerCfg.agent,
+      promptFile: managerCfg.promptFile,
+      input: [],
+      output: null,
+      confirm: false,
+    };
+    const inputs = ['artifacts/00-requirement.md', managerCfg.stateFile, managerCfg.decisionLog];
+    if (mode === 'review') {
+      inputs.push(managerCfg.handoffOutput, ...(currentStage.input || []));
+    }
+    gateStage.input = [...new Set(inputs)];
+    let currentOutput = '（演练模式无当前产物）';
+    if (mode === 'review' && currentStage.output && fs.existsSync(resolveWork(currentStage.output))) {
+      currentOutput = fs.readFileSync(resolveWork(currentStage.output), 'utf8');
+    }
+    const context = {
+      mode,
+      currentStageId: currentStage ? currentStage.id : targetStage.id,
+      targetStageId: targetStage.id,
+      targetStageName: targetStage.name,
+      nextStageId: mode === 'review' && stages[stages.indexOf(currentStage) + 1]
+        ? stages[stages.indexOf(currentStage) + 1].id : null,
+      isFinalFull: mode === 'review' && currentStage.id === stages[stages.length - 1].id && endIdx === stages.length - 1,
+      actualAgent: stageResult ? stageResult.agent : null,
+      report: stageResult ? stageResult.report : null,
+      rework: managerState.rework,
+    };
+    const appendix = `===== 项目经理执行模式 =====\n${mode === 'dispatch' ? '启动派活：为指定阶段生成任务书。' : '阶段验收：审查当前阶段产物与 REPORT，并决定下一步。'}\n\n===== 项目经理路由上下文 =====\n${JSON.stringify(context, null, 2)}${mode === 'review' ? `\n\n===== 当前阶段产物 =====\n${currentOutput}` : ''}`;
+    const result = runStage(gateStage, null, { appendix, managerGate: true, allowDelegate: false });
+    if (!result.ok) return result;
+    if (result.dry) return { ok: true, dry: true };
+    try {
+      const parsed = managerProtocol.parseManagerDecision(result.body, {
+        ...context,
+        stages,
+        report: stageResult ? stageResult.report : null,
+      });
+      managerState.history.push({
+        at: new Date().toISOString(),
+        action: mode,
+        stageId: currentStage ? currentStage.id : targetStage.id,
+        verdict: parsed.decision.verdict,
+        reason: parsed.decision.reason,
+        nextStageId: parsed.decision.nextStageId || null,
+      });
+      appendDecisionLog(mode, currentStage || targetStage, parsed.decision, parsed.body);
+      persistManagerState();
+      return { ok: true, decision: parsed.decision, body: parsed.body };
+    } catch (error) {
+      managerState.status = 'failed';
+      persistManagerState();
+      return { ok: false, errText: error.message };
+    }
+  }
+
+  function createBudgetEscalation(stage, resumeStageId, priorDecision) {
+    return {
+      verdict: 'ESCALATE',
+      reason: '返工预算已用尽，需要人工决定是否追加预算或停止项目。',
+      escalation: {
+        question: `是否批准为阶段 ${stage.id}（${stage.name}）额外增加一轮返工？`,
+        whyCannotDecide: '连续返工未达到验收标准，继续投入会改变已配置的预算，项目经理无权自行扩大。',
+        options: ['批准额外一轮返工并继续验证', '停止项目并保留当前产物与失败证据'],
+        recommendation: '如果失败原因明确且修复范围可控，批准一轮；否则停止并重新评估方案。',
+        impact: `当前单阶段返工 ${managerState.rework.byStage[resumeStageId] || 0} 次，总返工 ${managerState.rework.total} 次。`,
+        evidence: [priorDecision.reason, `当前产物：${stage.output || '无'}`],
+        resumeStageId,
+        recommendedAmend: '人工批准额外一轮返工。请针对上一轮问题清单修复，并重新提交可复现证据。',
+        workOrder: priorDecision.workOrder || null,
+      },
+    };
+  }
+
+  async function askHumanDecision(pending) {
+    console.log(`\n===== 需要人工决策 =====\n${managerProtocol.formatEscalation(pending)}\n`);
+    process.stdout.write('[y] 采纳推荐方案并继续  |  输入其他决策（多行，以 !done 结束）  |  输入“停止”取消\n> ');
+    const first = await nextLine();
+    const normalized = first.trim().toLowerCase();
+    if (['stop', 'cancel', '停止', '放弃'].includes(normalized)) return { action: 'stop' };
+    if (normalized === 'y') return { action: 'resume', text: pending.recommendedAmend };
+    const lines = [first];
+    process.stdout.write('> ');
+    for (;;) {
+      const line = await nextLine();
+      if (line.trim() === '!done') return { action: 'resume', text: lines.join('\n').trim() };
+      lines.push(line);
+      process.stdout.write('> ');
+    }
+  }
+
+  async function pauseForHuman(decision, currentStage, mode, reasonType = 'manager-escalation') {
+    const escalation = decision.escalation;
+    const pending = Object.assign({}, escalation, {
+      decisionId: `human-${Date.now()}`,
+      currentStageId: currentStage.id,
+      mode,
+      reasonType,
+      action: 'pending',
+      createdAt: new Date().toISOString(),
+    });
+    managerRouter.setPending(managerState, pending);
+    persistManagerState();
+    const file = resolveWork(managerCfg.escalationState);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({
+      projectName,
+      projectDir,
+      pipelineConfigRel,
+      stateFile: managerCfg.stateFile,
+      pending,
+    }, null, 2) + '\n');
+    log(`[${currentStage.id}] 项目经理升级人工：${escalation.question}`);
+    if (!interactive) {
+      console.log('\nHUMAN_DECISION_NEEDED');
+      console.log(`决策包：${managerCfg.escalationState}`);
+      console.log(`续跑：node scripts/run-pipeline.js --project-name "${projectName}" --project-dir "${projectDir}" --work-dir "${workRoot}" --resume-human ${pending.decisionId} --amend "<人工决策原文>"`);
+      process.exit(42);
+    }
+    const answer = await askHumanDecision(pending);
+    if (answer.action === 'stop') {
+      managerState.status = 'cancelled';
+      managerState.pending = null;
+      persistManagerState();
+      fs.writeFileSync(file, JSON.stringify({ projectName, action: 'cancelled', updatedAt: new Date().toISOString() }, null, 2) + '\n');
+      log('用户停止项目，当前产物与证据已保留。');
+      return null;
+    }
+    if (reasonType === 'rework-budget') managerRouter.approveExtraRework(managerState);
+    managerState.pending = null;
+    managerState.status = 'running';
+    persistManagerState();
+    fs.writeFileSync(file, JSON.stringify({
+      projectName,
+      action: 'resolved',
+      humanResponse: answer.text,
+      resolvedAt: new Date().toISOString(),
+    }, null, 2) + '\n');
+    return answer;
+  }
+
+  async function runManagedPipeline() {
+    let i = startIdx;
+    let workOrder = managerResumeWorkOrder;
+    let managerAmend = null;
+    managerResumeWorkOrder = null;
+
+    if (managerState.pending) {
+      const pending = managerState.pending;
+      const resumeIdx = stages.findIndex((stage) => stage.id === pending.resumeStageId);
+      const currentStage = stages[resumeIdx];
+      if (!currentStage) throw new Error(`人工升级包中的续跑阶段不存在：${pending.resumeStageId}`);
+      const answer = await pauseForHuman({ escalation: pending }, currentStage, pending.mode, pending.reasonType);
+      if (!answer) return;
+      i = resumeIdx;
+      managerAmend = pending.workOrder
+        ? `${answer.text}\n\n${managerProtocol.formatWorkOrder(pending.workOrder)}`
+        : answer.text;
+    }
+
+    if (managerKickoff) {
+      const gate = await runManagerGate('dispatch', null, stages[i], null);
+      if (!gate.ok) {
+        console.error(`\n项目经理启动派活失败：${gate.errText}`);
+        process.exit(2);
+      }
+      if (!gate.dry) {
+        if (gate.decision.verdict === 'ESCALATE') {
+          const answer = await pauseForHuman(gate.decision, stages[i], 'dispatch');
+          if (!answer) return;
+          managerAmend = gate.decision.escalation.workOrder
+            ? `${answer.text}\n\n${managerProtocol.formatWorkOrder(gate.decision.escalation.workOrder)}`
+            : answer.text;
+        } else {
+          workOrder = gate.decision.workOrder;
+          managerState.nextWorkOrder = workOrder;
+          persistManagerState();
+          log(`[pm-dispatch] 已派发 ${stages[i].id}（${stages[i].name}）`);
+        }
+      }
+    }
+
+    while (i <= endIdx) {
+      const stage = stages[i];
+      const userAmend = amend && i === startIdx ? amend : null;
+      const stageAmend = managerAmend || userAmend;
+      const result = runStage(stage, stageAmend, {
+        workOrder,
+        amendLabel: workOrder ? '项目经理返工' : '用户修订意见',
+      });
+      workOrder = null;
+      managerAmend = null;
+      if (!result.ok) {
+        managerState.status = 'failed';
+        persistManagerState();
+        console.error(`\n阶段 ${stage.id} 失败：${result.errText || '未知错误'}`);
+        console.error(`可用 --from ${stage.id} 断点重跑。`);
+        process.exit(2);
+      }
+      if (result.dry) {
+        const gate = runManagerGate('review', stage, stage, result);
+        if (!gate.ok) {
+          console.error(`\n项目经理验收演练失败：${gate.errText}`);
+          process.exit(2);
+        }
+        i++;
+        continue;
+      }
+
+      managerRouter.recordReport(managerState, stage, result.agent, result.report);
+      persistManagerState();
+      const gate = runManagerGate('review', stage, stage, result);
+      if (!gate.ok) {
+        managerState.status = 'failed';
+        persistManagerState();
+        console.error(`\n项目经理验收 ${stage.id} 失败：${gate.errText}`);
+        console.error(`可用 --from ${stage.id} 断点重跑。`);
+        process.exit(2);
+      }
+      const decision = gate.decision;
+      if (decision.verdict === 'ESCALATE') {
+        const resumeIdx = stages.findIndex((item) => item.id === decision.escalation.resumeStageId);
+        if (resumeIdx === -1 || resumeIdx > i) throw new Error(`人工升级包的续跑阶段无效：${decision.escalation.resumeStageId}`);
+        if (resumeIdx < i) managerRouter.invalidateFrom(managerState, stages, resumeIdx);
+        persistManagerState();
+        const answer = await pauseForHuman(decision, stage, 'review');
+        if (!answer) return;
+        i = resumeIdx;
+        managerAmend = decision.escalation.workOrder
+          ? `${answer.text}\n\n${managerProtocol.formatWorkOrder(decision.escalation.workOrder)}`
+          : answer.text;
+        continue;
+      }
+      if (decision.verdict === 'PROCEED') {
+        managerRouter.recordProceed(managerState, stage, decision.nextStageId, decision.workOrder);
+        if (decision.nextStageId) writeHandoff(decision, stages.find((item) => item.id === decision.nextStageId));
+        workOrder = decision.workOrder;
+        persistManagerState();
+        log(`[pm-review-${stage.id}] 验收通过 → ${decision.nextStageId}`);
+        const hasLaterConfirm = stages.slice(i + 1, endIdx + 1).some((item) => item.confirm);
+        if (initOnly && stage.confirm && !hasLaterConfirm) {
+          const nextId = stages[i + 1] ? stages[i + 1].id : null;
+          log('项目经理模式：前置引导段结束（--init-only）');
+          rl.close();
+          console.log(nextId
+            ? `\n继续执行：node scripts/run-pipeline.js --project-name ${projectName} --project-dir "${projectDir}" --work-dir "${workRoot}" --from ${nextId}`
+            : '\n流水线完成。');
+          return;
+        }
+        i++;
+        continue;
+      }
+      if (decision.verdict === 'COMPLETE') {
+        const acceptanceFile = resolveWork(managerCfg.acceptanceOutput);
+        fs.mkdirSync(path.dirname(acceptanceFile), { recursive: true });
+        const acceptance = [
+          `# 最终验收报告\n`,
+          `项目：${projectName}`,
+          `验收阶段：${stage.id}（${stage.name}）`,
+          `验收时间：${new Date().toISOString()}`,
+          `交付状态：可交付；未实际执行的部署动作不得标记为已上线。\n`,
+          gate.body || decision.reason,
+          `\n## 验收结论\n\n${decision.acceptance.summary}\n`,
+          `## 剩余风险\n\n${decision.acceptance.remainingRisks.map((item) => `- ${item}`).join('\n') || '- 无'}\n`,
+        ].join('\n');
+        fs.writeFileSync(acceptanceFile, acceptance);
+        managerRouter.recordProceed(managerState, stage, null);
+        managerState.status = 'complete';
+        persistManagerState();
+        log(`项目经理验收完成：${acceptanceFile}`);
+        rl.close();
+        console.log(`\n全部阶段执行完毕。验收单：${managerCfg.acceptanceOutput}；日志：logs/pipeline.log`);
+        return;
+      }
+
+      const targetId = decision.verdict === 'REWORK' ? stage.id : decision.nextStageId;
+      const targetIdx = stages.findIndex((item) => item.id === targetId);
+      const targetStage = stages[targetIdx];
+      if (!targetStage) throw new Error(`项目经理路由目标不存在：${targetId}`);
+      if (!managerRouter.canRework(managerState, targetId)) {
+        const budgetDecision = createBudgetEscalation(targetStage, targetId, decision);
+        const answer = await pauseForHuman(budgetDecision, targetStage, 'review', 'rework-budget');
+        if (!answer) return;
+        i = targetIdx;
+        managerAmend = budgetDecision.escalation.workOrder
+          ? `${answer.text}\n\n${managerProtocol.formatWorkOrder(budgetDecision.escalation.workOrder)}`
+          : answer.text;
+        continue;
+      }
+      managerRouter.recordRework(managerState, targetId, decision.verdict, decision.reason);
+      if (decision.verdict === 'RETURN_UPSTREAM') managerRouter.invalidateFrom(managerState, stages, targetIdx);
+      managerState.resumeStageId = targetId;
+      workOrder = decision.workOrder;
+      managerState.nextWorkOrder = workOrder;
+      persistManagerState();
+      log(`[pm-review-${stage.id}] ${decision.verdict} → ${targetId}（总返工 ${managerState.rework.total}）`);
+      i = targetIdx;
+    }
+    log(`项目经理模式完成指定阶段范围：${fromId} → ${toId}`);
+    rl.close();
+  }
+
   // 执行单个阶段：组装 prompt → 经适配器调用 CLI → 产物落盘；限额/过载自动切换模型重跑；
   // 角色输出 DELEGATE 标记段时换目标角色重跑本阶段（每阶段最多 DELEGATE_MAX_HOPS 次）
-  function runStage(stage, extraAmend) {
+  function runStage(stage, extraAmend, opts = {}) {
     const baseAgentDef = agentsConfig.agents[stage.agent];
     if (!baseAgentDef) { log(`[${stage.id}] 跳过：未找到 agent ${stage.agent}`); return { ok: true, skipped: true }; }
 
@@ -449,7 +858,7 @@ function main() {
     );
 
     // 用户修订意见自动入记忆（交互 amend / --amend / 回炉报告），重跑同阶段时自动带出
-    if (extraAmend && memoryDir && baseAgentDef.memory !== false) appendMemoryEvent(stage, extraAmend);
+    if (extraAmend && memoryDir && baseAgentDef.memory !== false) appendMemoryEvent(stage, extraAmend, opts.amendLabel || '用户修订');
 
     let agentId = stage.agent; // 当前执行角色（委托后变化，知识/记忆随最终执行者）
     let delegateCtx = null;    // 委托上下文（来自前一角色的交接）
@@ -462,18 +871,22 @@ function main() {
       const contextParts = [];
       for (const inputRel of stage.input || []) {
         const inputAbs = resolveWork(inputRel);
-        if (fs.existsSync(inputAbs)) {
+        if (managerState && managerState.invalidatedOutputs.includes(inputRel)) {
+          log(`[${stage.id}] 跳过已失效输入产物 ${inputRel}`);
+        } else if (fs.existsSync(inputAbs)) {
           contextParts.push(`\n\n===== 上下文输入：${inputRel} =====\n` + fs.readFileSync(inputAbs, 'utf8'));
         } else {
           log(`[${stage.id}] 警告：输入产物缺失 ${inputRel}，继续执行`);
         }
       }
       if (contextParts.length) prompt += contextParts.join('');
-      if (extraAmend) prompt += `\n\n===== 用户修订意见（请据此更新产物，其余内容保持一致） =====\n` + extraAmend;
+      if (opts.workOrder) prompt += `\n\n===== 项目经理任务书 =====\n` + managerProtocol.formatWorkOrder(opts.workOrder);
+      if (extraAmend) prompt += `\n\n===== ${opts.amendLabel || '用户修订意见'}（请据此更新产物，其余内容保持一致） =====\n` + extraAmend;
+      if (opts.appendix) prompt += `\n\n` + opts.appendix;
       // 角色协作上下文：记忆 + 知识库 + 标记段协议（agent 级 knowledge/memory:false 或全局开关关闭）
       const knowledgeOn = !!knowledgeDir && agentDef.knowledge !== false;
       const memoryOn = !!memoryDir && agentDef.memory !== false;
-      if (knowledgeOn || memoryOn) prompt += contextBlockFor(agentId, stage, { knowledgeOn, memoryOn });
+      if (knowledgeOn || memoryOn) prompt += contextBlockFor(agentId, stage, { knowledgeOn, memoryOn, delegateOn: delegateOn && opts.allowDelegate !== false });
       if (delegateCtx) prompt += delegateBlock(delegateCtx);
 
       // 模型候选链：阶段级显式模型 > 代理级模型 > 阶段/代理 fallbackModels > 适配器动态模型 > auto
@@ -579,6 +992,18 @@ function main() {
         }
       }
 
+      let report = null;
+      if (managerCfg && !opts.managerGate) {
+        try {
+          const parsed = managerProtocol.parseSpecialistReport(body);
+          body = parsed.body;
+          report = parsed.report;
+        } catch (error) {
+          log(`[${stage.id}] 失败：${error.message}`);
+          return { ok: false, errText: error.message };
+        }
+      }
+
       if (stage.output) {
         const outAbs = resolveWork(stage.output);
         fs.mkdirSync(path.dirname(outAbs), { recursive: true });
@@ -587,11 +1012,15 @@ function main() {
       } else {
         log(`[${stage.id}] 完成（无产物文件，输出长度 ${body.length}）`);
       }
-      return { ok: true, agent: agentId };
+      return { ok: true, agent: agentId, body, report };
     }
   }
 
   (async () => {
+    if (managerCfg) {
+      await runManagedPipeline();
+      return;
+    }
     let retryAmend = null; // 回炉注入的修订意见，作用于 resumeStage 重跑的首轮
     let retryUsed = 0;
     for (let i = startIdx; i <= endIdx; i++) {
@@ -631,20 +1060,27 @@ function main() {
       } while (true);
 
       // 回炉检查：checkStage 产物命中失败标记且轮数未用尽 → 带验证报告回 resumeStage 重修
-      if (retryCfg && retryMaxRounds > 0 && stage.id === retryCfg.checkStage && stage.output && !stageResult.dry) {
+      if (retryCfg && stage.id === retryCfg.checkStage && stage.output && !stageResult.dry) {
         let report = null;
         try {
           report = fs.readFileSync(resolveWork(stage.output), 'utf8');
-        } catch (e) {
-          log(`[${stage.id}] 回炉检查：产物读取失败，视为通过（${e.message}）`);
+        } catch (error) {
+          log(`[${stage.id}] 回炉检查：产物读取失败，验证未通过（${error.message}）`);
+          process.exit(2);
         }
-        if (report !== null && new RegExp(retryCfg.failPattern).test(report)) {
+        if (!/VERDICT:\s*(PASS|FAIL)/.test(report)) {
+          log(`[${stage.id}] 回炉检查：验证报告缺少 VERDICT: PASS/FAIL，验证未通过`);
+          process.exit(2);
+        }
+        if (new RegExp(retryCfg.failPattern).test(report)) {
           if (retryUsed >= retryMaxRounds) {
-            log(`[${stage.id}] 验证未通过（命中 ${retryCfg.failPattern}），回炉轮数已用尽（${retryMaxRounds}），继续推进；失败明细见 ${stage.output}`);
+            log(`[${stage.id}] 验证未通过（命中 ${retryCfg.failPattern}），回炉轮数已用尽（${retryMaxRounds}），项目阻塞；失败明细见 ${stage.output}`);
+            process.exit(2);
           } else {
             const resumeIdx = stages.findIndex((s) => s.id === retryCfg.resumeStage);
             if (resumeIdx === -1 || resumeIdx >= i) {
-              log(`[${stage.id}] 回炉配置无效：resumeStage=${retryCfg.resumeStage} 不存在或不在 checkStage 之前，跳过回炉`);
+              log(`[${stage.id}] 回炉配置无效：resumeStage=${retryCfg.resumeStage} 不存在或不在 checkStage 之前，项目阻塞`);
+              process.exit(2);
             } else {
               retryUsed++;
               retryAmend = `【第 ${retryUsed} 轮修复验证未通过（最多 ${retryMaxRounds} 轮）。以下是验证报告全文，请针对失败项完成修复，再重新执行本阶段任务】\n\n` + report.slice(0, 6000);

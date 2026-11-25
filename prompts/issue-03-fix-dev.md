@@ -13,4 +13,18 @@
 
 【输出方式（强约束，必须遵守）】
 - 代码改动按方案直接写入 {projectDir}；完成文档作为最终回复正文直接输出（标准输出），由编排器负责落盘。
-- 严禁把完成文档写入文件（不得创建 artifacts/、docs/、*.md 等）；回复正文只包含完成文档本身。
+- 严禁把完成文档写入文件（不得创建 artifacts/、docs/、*.md 等）；回复正文包含完成文档，不要开场白。
+- 文档之后追加 REPORT 协作块，由编排器剥离后落盘；evidence 必须写实际执行的验证命令与结果。
+
+===== REPORT =====
+{
+  "status": "done",
+  "summary": "一句话说明修复交付结论",
+  "completedTasks": ["修复事项与实际改动位置"],
+  "evidence": ["实际执行的命令与结果摘要"],
+  "issues": ["偏离方案或遗留问题，无则写无"],
+  "unverified": ["未验证项，无则写无"],
+  "decisionsNeeded": ["需要项目经理决定的事项，无则写无"],
+  "recommendedNextRole": "tester"
+}
+===== REPORT END =====
