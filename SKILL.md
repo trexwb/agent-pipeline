@@ -2,13 +2,13 @@
 name: agent-pipeline
 version: 1.3.0
 display_name: 多 Agent 开发流水线
-description: 多 Agent 软件开发流水线编排器，把一条需求自动推进到可交付代码。提供两条流水线：新功能走「产品规划、需求拆解、架构设计、开发编码、代码审查、测试、部署」7 阶段；功能修复（bug/报错/行为不符）走「分析、方案、修复、验证、PR 描述」5 阶段，手动修复需求或 GitHub Issue 自动触发均可，验证不通过自动回炉重修。阶段间用 artifacts 传递产物，支持人工确认、远程确认、断点续跑与限额自动换模型；每个角色自带持久知识库（跨任务可复用经验）、过程记忆（执行摘要/交接便签/用户修订自动入记忆）与动态委托能力（发现本阶段更适合其他角色时自动换人重跑）。This skill should be used when 用户想从一个想法自动走到部署、要求按阶段编排多个 AI agent 协作、想让不同阶段使用不同角色或模型、要让角色积累复用经验或记住任务过程、要跑需求构建器生成 A/B 双版本需求、要修复现有功能的故障、或需要 GitHub Issue 自动修复循环。触发词包括 自动编排、流水线、pipeline、从需求到开发完成、多 Agent 协作、阶段化开发、功能修复、修复需求、bug 修复流水线、角色知识库、角色记忆、动态委托、issue 自动修复。适用于 WorkBuddy、CodeBuddy、zCode、Qoder、Marvis、Claude Code、Codex 及任意兼容 Agent Skills 的宿主或自定义 agent CLI。不用于单文件小改动、简单问答或直接的代码片段生成。
+description: 多 Agent 软件开发流水线编排器，由独立项目经理负责启动派活、任务书、逐阶段验收、返工/退回上游、最终验收与人工升级，专业角色仍按固定阶段交付。开发流水线含产品规划、需求拆解、架构设计、开发编码、代码审查、测试、部署 7 个专业阶段；修复流水线含分析、方案、修复、验证、PR 描述 5 个专业阶段，支持手动需求与 GitHub Issue。专业角色通过 REPORT 反馈证据，项目经理通过 DECISION 路由；只有业务范围、生产发布、不可逆操作、授权或证据冲突等无权决策事项才升级人工。阶段间用 artifacts 传递产物，支持远程人工恢复、断点续跑、限额自动换模型、角色知识库、过程记忆与动态委托；旧配置自动回退原人工确认/回炉逻辑。This skill should be used when 用户想从一个想法自动走到可交付代码、要求项目经理编排与验收多 Agent 协作、想让不同阶段使用不同角色或模型、要积累复用经验或任务记忆、要生成 A/B 双版本需求、要修复现有功能或运行 GitHub Issue 自动修复循环。触发词包括 项目经理、自动编排、流水线、pipeline、从需求到开发完成、多 Agent 协作、阶段验收、功能修复、角色知识库、角色记忆、动态委托、issue 自动修复。适用于 WorkBuddy、CodeBuddy、zCode、Qoder、Marvis、Claude Code、Codex 及任意兼容 Agent Skills 的宿主或自定义 agent CLI。不用于单文件小改动、简单问答或直接的代码片段生成。
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
 # 多 Agent 开发流水线（agent-pipeline）
 
-把软件开发拆成多个阶段，每个阶段由独立子 Agent（角色 + 系统提示词 + 模型 + 工具白名单）执行，阶段间通过 `artifacts/` 传递产物。编排器负责组装 prompt → 调用宿主 agent CLI → 落盘产物 → 人工确认 / 断点续跑 / 限额自动切换模型。
+把软件开发拆成固定专业阶段，由独立子 Agent（角色 + 系统提示词 + 模型 + 工具白名单）执行；项目经理在阶段之间派活与验收，编排器负责组装 prompt → 调用宿主 agent CLI → 落盘产物 → 执行结构化路由 / 人工升级 / 断点续跑 / 限额自动切换模型。默认启用项目经理，旧配置可回退原人工确认模式。
 
 本 skill 是**纯 Node.js 编排壳**（Node >= 18，零 npm 依赖），自身不实现 AI 能力，AI 能力来自当前宿主的 agent CLI。
 
@@ -18,7 +18,7 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 
 ### 目标
 
-帮助用户「从一个想法自动走到部署」或「一条修复需求自动走到可发布修复」：把用户需求拆分为固定阶段，每个阶段交由指定角色/模型完成，阶段之间顺序衔接，直至全流程完成。
+帮助用户「从一个想法自动推进到可交付代码」或「一条修复需求自动推进到可发布修复」：专业角色按固定阶段交付，项目经理逐阶段验收并决定继续、返工、退回上游、完成或升级人工。部署阶段只产出部署方案，最终完成表示可交付/待部署，不表示已上线。
 
 ### 输入
 
@@ -34,7 +34,7 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 
 ### 工作流与角色
 
-在同一条流水线内严格按照阶段顺序执行，前一阶段完成后再进入下一阶段。每个阶段只由表中指定的角色执行，不得跳过或调换阶段顺序。
+专业阶段不得跳过：正常推进严格按表中顺序，前一阶段经项目经理验收后才能进入下一阶段；验收不通过只能由项目经理决策 `REWORK` 重跑当前阶段，或 `RETURN_UPSTREAM` 退回更早阶段。项目经理不是专业阶段，不占用表中的阶段序号，也不代替专业角色写代码、做测试或提供审查证据。
 
 **表一：开发流水线（7 阶段，默认）**
 
@@ -53,18 +53,40 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 | 序号 | 阶段 | 当前执行角色 | agent id | 阶段产出 |
 |------|------|--------------|----------|----------|
 | 1 | 修复需求分析 | 代码审查工程师 | `code-reviewer` | `artifacts/issue-analysis.md` |
-| 2 | 修复方案设计（需确认） | 架构师 | `architect` | `artifacts/issue-fix-plan.md` |
+| 2 | 修复方案设计 | 架构师 | `architect` | `artifacts/issue-fix-plan.md` |
 | 3 | 开发修复 | 全栈开发工程师 | `developer` | `artifacts/issue-fix-done.md` + 代码写入项目目录 |
 | 4 | 修复验证 | 测试工程师 | `tester` | `artifacts/issue-test-report.md`（末行 `VERDICT: PASS|FAIL`） |
 | 5 | PR 描述 | 运维工程师 | `devops` | `artifacts/issue-pr.md` |
 
-修复验证产物末行标记 `VERDICT: FAIL` 且轮数未用尽时，编排器自动携带验证报告回到「开发修复」阶段重修（默认最多 2 轮，`--fix-rounds` 可调，`0` 关闭）；轮数用尽则如实推进并在汇报中注明未通过。
+项目经理模式下，修复验证必须保留末行 `VERDICT: PASS|FAIL`，并由项目经理结合 REPORT 与验证证据决定放行或返工；`VERDICT: FAIL`、报告缺失或证据不足均不得直接完成。默认单阶段最多返工 2 次、总返工 6 次，预算耗尽升级人工。旧配置（`projectManager` 缺失或 `enabled: false`）保留原自动回炉：命中 `VERDICT: FAIL` 且轮数未用尽时回到开发修复，默认最多 2 轮，`--fix-rounds` 可调，`0` 关闭；报告缺少 VERDICT 或轮数用尽时失败退出，不再默认放行。
+
+### 项目经理控制层（默认启用）
+
+| 控制角色 | agent id | 职责 | 产出 |
+|---------|----------|------|------|
+| 项目经理 | `project-manager` | 启动派活、生成任务书、验收 REPORT 与产物、返工/退回上游、最终验收、人工升级 | `pm-handoff.md`、`pm-decisions.md`、`pm-project-state.json`、`pm-escalation.json`、`99-acceptance.md` |
+
+**协作协议**
+
+1. 首次执行由项目经理生成首阶段 `workOrder`：目标、必须完成、验收检查、约束、明确不做。
+2. 每个专业阶段输出正文 + 一个 `REPORT` JSON 块，字段包括 `status`、`summary`、`completedTasks`、`evidence`、`issues`、`unverified`、`decisionsNeeded`、`recommendedNextRole`。REPORT 由编排器剥离，不污染正式产物。
+3. 项目经理读取任务书、上游输入、当前产物与 REPORT，输出正文 + 一个 `DECISION` JSON 块：
+   - `PROCEED`：当前阶段通过，只为紧邻下一阶段派活；
+   - `REWORK`：重跑当前阶段；
+   - `RETURN_UPSTREAM`：退回更早阶段，目标及下游旧产物、验收结论全部失效；
+   - `ESCALATE`：提交完整人工决策包；
+   - `COMPLETE`：仅完整流水线最后阶段使用，生成最终验收单。
+4. 缺少有效 REPORT 时不得 `PROCEED` / `COMPLETE`；不得跳阶段，也不得在最后阶段用 `PROCEED` 冒充完成。
+5. 只有业务范围变化、生产发布、不可逆操作、新增授权、预算/工期重大取舍、阻塞问题豁免或证据冲突才升级人工。普通技术返工不得上交用户。
+6. 人工升级写 `pm-escalation.json`、打印 `HUMAN_DECISION_NEEDED` 并退出 42；用 `--resume-human <decisionId> --amend "<人工决策原文>"` 恢复，保留状态、历史和已花返工预算。重复传 `--requirement` 或显式 `--from` 会开启新的管理运行，不能用于恢复人工升级。
+
+两条内置流水线成功路径约需 15 次（开发）与 11 次（修复）CLI 调用，含项目经理派活/验收；返工或人工升级会增加调用次数。
 
 > 提示词模板中「·架构方案推荐师」等后缀是对该角色能力的补充说明，不构成额外角色。
 
 ### 角色记忆与协作（知识库 · 记忆 · 动态委托）
 
-每个角色默认同时具备三种能力，同一工作目录下的重复运行持续积累：
+每个专业角色默认同时具备三种能力，项目经理也可使用知识库与记忆，但项目经理门禁禁止动态委托；同一工作目录下的重复运行持续积累：
 
 **1. 知识库（跨任务的可复用事实经验）**
 
@@ -80,7 +102,7 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 **3. 动态委托（角色可插手其他角色的工作）**
 
 - 角色执行中发现本阶段更适合其他角色时，输出 `DELEGATE` 标记段（`target:`/`reason:`/`handoff:`）；编排器自动**换目标角色重跑本阶段**，原角色的初步产出与交接说明作为上下文带入，知识/记忆沉淀归属最终执行者。
-- 边界：只能委托给 `agents.json` 内的角色；每阶段最多换一次执行角色（防循环）；**只换执行者，不改变阶段顺序、产物路径与验收要求**；确认责任仍在原阶段。
+- 边界：专业角色只能委托给 `agents.json` 内的角色；每阶段最多换一次执行角色（防循环）；**只换执行者，不改变阶段顺序、产物路径与验收要求**；确认责任仍在原阶段。项目经理派活/验收门禁不参与委托，避免验收者转交责任。
 - `--no-delegate` 全局关闭。
 
 三种能力的标记段均附在回复正文之后、不计入产物文档；知识/记忆文件均为追加式 Markdown，可人工编辑修剪。
@@ -89,11 +111,11 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 
 1. 接收用户输入的需求。
 2. 按「需求路由」判定流水线类型（开发 / 修复），并向用户说明判定结果。
-3. 按所选流水线的阶段顺序逐一调用对应角色推进任务。
-4. 每个阶段完成后，输出该阶段的产出，再进入下一阶段。
-5. 全部阶段完成后，汇总整条流水线的执行结果。
+3. 由项目经理生成首阶段任务书，调用专业角色执行，再读取 REPORT 与产物进行验收。
+4. 按 DECISION 继续、返工、退回上游或升级人工；只有专业阶段全部通过后，由最后阶段生成最终验收单。
+5. 汇总实际执行结果、返工次数、未验证项、剩余风险和未执行的部署动作。
 
-实现层映射：每阶段对应 `run-pipeline.js` 的一次 CLI 调用，产物由编排器从 stdout 落盘。宿主默认带 `--interactive`，开发流水线阶段 1/2、修复流水线阶段 2（修复方案）的确认点会把产物与「待定假设」一并转述给用户，得到确认后再继续；后续阶段输入出现歧义时应暂停，用 `--from <阶段> --amend "<意见>"` 重跑，不得擅自推进。`--from` / `--to` 仅用于失败续跑或用户明确指定的阶段范围，不得用来默认跳过阶段。修复验证的回炉重修由编排器自动完成，无需宿主介入。
+实现层映射：每个专业阶段与每次项目经理派活/验收对应 `run-pipeline.js` 的一次 CLI 调用，产物由编排器从 stdout 落盘。项目经理模式不使用旧 `confirm` 人工确认点，而由结构化门禁控制；`--interactive` 仅用于人工升级时终端应答。`--from` / `--to` 用于失败续跑或用户明确指定的阶段范围；`--from` 会标记本次范围及下游产物失效，不得用来默认跳过验收。恢复人工升级必须用 `--resume-human`。旧配置才使用原 `--interactive` / `--remote` 阶段确认与修复自动回炉。
 
 ### 输出格式
 
@@ -111,18 +133,20 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 代码目录：<projectDir>；日志：logs/pipeline.log；未实际执行的部署动作说明
 ```
 
+项目经理模式还须汇报：最终验收单 `artifacts/99-acceptance.md`、决策日志 `artifacts/pm-decisions.md`、返工/退回上游次数、人工升级与恢复结果。若退出 42，先汇报 `pm-escalation.json` 中的问题、选项、推荐、影响与证据，不得把等待人工说成阶段失败或已完成。
+
 修复流水线同格式，汇总行为：
 
 ```text
 【全流程汇总｜修复流水线】
-1 修复需求分析 ✓ / 2 修复方案设计 ✓ / 3 开发修复 ✓（重修 N 轮）/ 4 修复验证 ✓（VERDICT: PASS）/ 5 PR 描述 ✓
-代码目录：<projectDir>；日志：logs/pipeline.log；验证未通过时注明剩余风险与失败明细位置
+1 修复需求分析 ✓ / 2 修复方案设计 ✓ / 3 开发修复 ✓（项目经理返工 N 轮）/ 4 修复验证 ✓（VERDICT: PASS）/ 5 PR 描述 ✓
+代码目录：<projectDir>；验收单：artifacts/99-acceptance.md；日志：logs/pipeline.log；未通过时注明失败明细与剩余风险
 ```
 
 ### 约束
 
 - **输出语言**：简体中文；英文术语、代码、命令与专名保持原样。
-- **阶段与角色**：每个阶段只由工作流中指定的角色执行，不得跳过或调换阶段顺序。
+- **阶段与角色**：专业阶段不得跳过或合并；正常推进按固定顺序，验收不通过由项目经理选择当前阶段返工或更早阶段重修。项目经理不代替专业角色交付。
 - **流水线路由**：修复类需求（现有功能故障/报错/行为不符）必须走修复流水线，不得用 7 阶段开发流硬套；从零构建必须走开发流水线。路由不确定时向用户确认。
 - **信息缺失**：列出缺失项并请用户补充后再继续，不得自行编造业务规则、数据或结论。
 - **超出范围**：说明超出范围的原因，返回可用的阶段与角色清单供用户选择，不启动流水线。
@@ -150,14 +174,11 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 2. **确认宿主 CLI**。运行 `node <SKILL_DIR>/scripts/run-pipeline.js --dry-run --project-name <项目名>` 查看探测到的适配器。宿主可通过 `AGENT_PIPELINE_HOST` 指定（取值 `workbuddy` / `codebuddy` / `zcode` / `qoder` / `marvis`），未指定时按环境变量与系统命令自动探测。若探测失败，引导用户安装该宿主的 CLI，或改用 `--adapter plain` 并配置 `plain.command`。
 3. **选择入口**。
    - 需求模糊：先 `node <SKILL_DIR>/scripts/req-builder.js --guide` 取得 7 维度引导，收集用户回答后 `--build "<需求文本>"` 生成 A/B 双版本，把两个版本呈现给用户选择，再用 `--select A|B` 写入 `artifacts/00-requirement.md`。可加 `--auto-run --project-name <项目名>` 自动续跑。
-   - 新功能需求明确：直接 `node <SKILL_DIR>/scripts/run-pipeline.js --project-name <项目名> --interactive`。
-   - 修复需求（现有功能故障/报错/行为不符）：`node <SKILL_DIR>/scripts/run-pipeline.js --project-name <项目名> --project-dir <代码目录> --pipeline fix --requirement "<问题描述>" --interactive`。修复方案（阶段 2）产出后暂停确认；验证不通过由编排器自动回炉重修。
-4. **处理确认**。`--interactive` 需要人在终端输入；当宿主是 IDE/聊天界面、无法等待 stdin 时，改用 `--remote`：编排器在确认点写 `artifacts/.confirm-state.json`、打印 `REMOTE_CONFIRM_NEEDED` 并以 exit 42 退出。宿主 Agent 应读取该状态文件，把阶段产物转述给用户，收集「确认 / 修改意见」：
-   - 确认 → 以 `--from <nextStageId>` 续跑；
-   - 修改意见 → 以 `--from <stageId> --amend "<意见>"` 重跑该阶段。
-   - 协议细节与状态文件 schema 见 `references/remote-confirm.md`。
-5. **失败与续跑**。阶段失败 exit 2，用 `--from <失败阶段>` 续跑，前序产物保留不浪费；退出码 0 成功、1 配置或 CLI 错误、42 等待远程确认。
-6. **交付汇报**。严格按「输出格式」章节输出：逐阶段分条列出阶段序号与名称、当前执行角色、该阶段产出（含产物路径），最后给出覆盖 7 个阶段的全流程汇总，并注明代码目录 `<projectDir>`、日志 `logs/pipeline.log` 与编排器未实际执行的部署动作。
+   - 新功能需求明确：直接 `node <SKILL_DIR>/scripts/run-pipeline.js --project-name <项目名>`；项目经理会派活并逐阶段验收。
+   - 修复需求（现有功能故障/报错/行为不符）：`node <SKILL_DIR>/scripts/run-pipeline.js --project-name <项目名> --project-dir <代码目录> --pipeline fix --requirement "<问题描述>"`。验证失败由项目经理决定返工或升级，不自动跳过验证。
+4. **处理人工升级**。项目经理模式退出 42 时读取 `<WORK_DIR>/artifacts/pm-escalation.json`，向用户转述完整决策包；收集决定后以 `--resume-human <pending.decisionId> --amend "<人工决策原文>"` 续跑，不要重复传 `--requirement` 或 `--from`。`--interactive` 可在终端直接应答。旧配置的 `--remote` 才使用 `artifacts/.confirm-state.json` 与 `REMOTE_CONFIRM_NEEDED`，按旧协议「确认 → `--from <nextStageId>`；修改 → `--from <stageId> --amend`」恢复。
+5. **失败与续跑**：阶段失败 exit 2，用 `--from <失败阶段>` 续跑，前序产物保留不浪费；退出码 0 成功、1 配置或 CLI 错误、42 等待人工决策/远程确认。
+6. **交付汇报**：严格按「输出格式」章节输出：逐阶段分条列出阶段序号与名称、当前执行角色、该阶段产出（含产物路径），最后给出覆盖全部专业阶段的汇总，并注明项目经理验收单、代码目录 `<projectDir>`、日志 `logs/pipeline.log` 与编排器未实际执行的部署动作。
 
 ## 快速开始
 
@@ -167,21 +188,22 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 # 0. 演练：只打印各阶段命令，同时校验 CLI 可用
 node scripts/run-pipeline.js --project-name demo-app --dry-run
 
-# 1. 交互引导（推荐）：01/02 产出后暂停审阅；y 确认，或输入修改意见（!done 结束）让 agent 重跑
+# 1. 默认项目经理模式：自动派活、逐阶段验收；只有无权决策时暂停
+node scripts/run-pipeline.js --project-name demo-app
+
+# 2. 终端交互仅用于项目经理升级人工时直接应答
 node scripts/run-pipeline.js --project-name demo-app --interactive
 
-# 2. 只跑前置段（产品分析 + 需求细化），确认后退出
-node scripts/run-pipeline.js --project-name demo-app --interactive --init-only
-
-# 3. 需求确认后自动跑完（架构 → 开发 → 审查 → 测试 → 部署）
-node scripts/run-pipeline.js --project-name demo-app --from 03-architecture
-
-# 4. 全自动；或指定阶段范围
+# 3. 只跑指定范围；恢复时从状态记录的下一阶段继续
+node scripts/run-pipeline.js --project-name demo-app --to 02-requirements
 node scripts/run-pipeline.js --project-name demo-app
-node scripts/run-pipeline.js --project-name demo-app --from 04-develop --to 06-test
 
-# 5. 远程确认（适合 IDE / IM 机器人 / 聊天宿主）
-node scripts/run-pipeline.js --project-name demo-app --remote
+# 4. 失败续跑或用户明确要求重做某阶段（会使该阶段及下游产物失效）
+node scripts/run-pipeline.js --project-name demo-app --from 04-develop --amend "修订意见"
+
+# 5. 项目经理退出 42 后，按决策包恢复
+node scripts/run-pipeline.js --project-name demo-app \
+  --resume-human human-123 --amend "人工决定原文"
 ```
 
 需求构建器与功能修复：
@@ -194,10 +216,8 @@ node scripts/req-builder.js --select A --auto-run --project-name demo-app
 
 # 手动修复需求：直接描述故障，走「分析→方案→修复→验证→PR 描述」5 阶段
 node scripts/run-pipeline.js --project-name demo-app --project-dir ./demo-app \
-  --pipeline fix --requirement "登录页在 Safari 下提交报错 XXX" --interactive
-# 验证不通过自动回炉重修，最多 N 轮（默认 2，0=关闭）
-node scripts/run-pipeline.js --project-name demo-app --pipeline fix \
-  --requirement "..." --fix-rounds 3
+  --pipeline fix --requirement "登录页在 Safari 下提交报错 XXX"
+# 项目经理根据 VERDICT 与 REPORT 决定返工/退回上游；单阶段≤2、总计≤6，超出升级人工
 
 # 编辑 config/github.json（owner/repo/localProjectDir，token 走 GITHUB_TOKEN 环境变量）
 node scripts/watch-issues.js --once        # 单轮，配 cron / 计划任务
@@ -215,11 +235,12 @@ node scripts/watch-issues.js               # 默认常驻轮询（不带 --once 
 | `--pipeline feature\|fix` | 流水线预设：开发 7 阶段 / 修复 5 阶段，与 `--pipeline-config` 互斥 | `feature` |
 | `--requirement "<文本>"` | 需求原文，写入 `artifacts/00-requirement.md` 作首阶段输入 | 无 |
 | `--from` / `--to` | 起止阶段 id | 首/末阶段 |
-| `--interactive` | confirm 阶段产出后暂停审阅，可回灌修订意见 | false |
-| `--remote` | confirm 阶段产出后写状态文件并 exit 42 | false |
-| `--init-only` | 跑到最后一个需确认的阶段即退出 | false |
-| `--amend "<意见>"` | 修订意见追加进 `--from` 阶段重跑 | 无 |
-| `--fix-rounds <n>` | 修复验证未通过的自动回炉轮数，`0`=关闭 | 流水线配置 `retry.maxRounds`（修复流默认 2） |
+| `--interactive` | 项目经理升级人工时在终端应答；旧配置用于 confirm 阶段审阅 | false |
+| `--remote` | 旧配置 confirm 阶段写状态文件并 exit 42；项目经理人工升级本身始终支持非交互退出 | false |
+| `--init-only` | 旧配置跑到最后一个 confirm 阶段；项目经理模式跑到本次范围内最后一个 confirm 阶段 | false |
+| `--amend "<意见>"` | 修订意见追加进 `--from` 阶段；与 `--resume-human` 配合注入人工决策 | 无 |
+| `--resume-human <id>` | 按 `pm-escalation.json` 的 decisionId 恢复人工升级，必须同时提供 `--amend` | 无 |
+| `--fix-rounds <n>` | 仅旧配置修复回炉轮数，`0`=关闭；项目经理模式由返工预算控制 | 流水线配置 `retry.maxRounds`（默认 2） |
 | `--knowledge-dir <dir>` | 角色知识库目录（注入历史经验 + 沉淀新知识） | `<work-dir>/knowledge` |
 | `--no-knowledge` | 关闭角色知识库（不注入、不沉淀） | false |
 | `--no-memory` | 关闭角色记忆（执行摘要/交接便签/用户修订入记忆） | false |
@@ -279,7 +300,8 @@ node scripts/install.js --platform auto --scope user --uninstall
 
 ## 定制与扩展
 
-- **改阶段**：编辑 `config/pipeline.json`，增删 `stages` 项；`confirm: true` 标记需确认；`input` 指向前序产物；`output: null` 表示不落盘该阶段 stdout。
+- **改阶段**：编辑 `config/pipeline.json`，增删 `stages` 项；旧配置中 `confirm: true` 标记人工确认点；`input` 指向前序产物；`output: null` 表示不落盘该阶段 stdout。项目经理模式下专业阶段仍不得跳过。
+- **项目经理模式**：`projectManager.enabled=false` 回退旧人工确认/回炉逻辑；`kickoff` 控制首次派活；`maxReworkRounds` / `maxTotalReworks` 控制返工预算；状态、交接、决策日志、升级包与验收单路径均可配置。
 - **改角色/模型**：编辑 `config/agents.json`；`model` 填 `auto` 或具体模型 ID，`fallbackModels` 为限额回退候选；阶段级配置优先于代理级。
 - **改提示词**：编辑 `prompts/*.md`，支持 `{projectName}` / `{projectDir}` / `{userNeed}` 占位符。把同名文件放 `--work-dir` 下可覆盖内置模板，无需改动只读的安装目录。
 - **管知识库与记忆**：`knowledge/<agent-id>.md`、`memory/<agent-id>.md`、`memory/handoffs.md` 均为追加式 Markdown，可随时人工修剪过时条目；知识库跨项目共享用 `--knowledge-dir ~/.agent-pipeline/knowledge`；按角色关闭改 `agents.json` 的 `knowledge` / `memory` 字段；`--no-knowledge` / `--no-memory` / `--no-delegate` 全局关闭对应能力。
@@ -294,10 +316,10 @@ agent-pipeline/
 ├── CHANGELOG.md             # 版本历史、待办问题与迭代闭环
 ├── README.md                # 仓库说明与安装入口
 ├── config/                  # cli / agents / pipeline / issue-pipeline / github 五份配置
-├── prompts/                 # 13 个阶段提示词模板
+├── prompts/                 # 14 个提示词模板（项目经理 + 12 个专业阶段）
 ├── references/
 │   ├── platform-compat.md   # 五平台路径、元数据、CLI 差异
-│   └── remote-confirm.md    # 远程确认协议（exit 42 状态文件 schema）
+│   └── remote-confirm.md    # 远程人工决策与旧版确认协议
 └── scripts/
     ├── install.js           # 一键安装到五个宿主
     ├── version.js           # 版本号管理 CLI（记录问题 / 发版 / 校验 / 盘点）
@@ -307,7 +329,9 @@ agent-pipeline/
     ├── watch-issues.js      # GitHub Issue 监听
     └── lib/
         ├── adapter.js       # CLI 适配层
-        ├── platforms.js     # 五宿主安装位置共享定义
+        ├── manager-protocol.js # REPORT/DECISION 协议校验
+        ├── manager-router.js   # 状态、返工预算与产物失效
+        ├── platforms.js
         └── version.js       # 版本权威读取、同步、发版与盘点
 ```
 
@@ -319,7 +343,7 @@ agent-pipeline/
 2. **产物上下文**：每阶段自动把 `input` 指定的产物全文拼进 prompt；缺失仅告警不中断。提示词模板要求子 Agent 把文档正文输出到 stdout，由编排器统一落盘，严禁子 Agent 自行写产物文件。
 3. **Windows**：npm 全局 `.cmd` 包装器会自动改为 node 直跑 JS 入口，规避 spawn EINVAL 与 shell 转义问题。
 4. **只读安装目录**：市场安装的 skill 目录可能只读；配置覆盖用 `--work-dir`，不要用编辑安装目录的方式定制。
-5. **退出码**：0 成功；1 配置/CLI 错误；2 阶段执行失败；42 远程确认挂起。
+5. **退出码**：0 成功；1 配置/CLI 错误；2 阶段执行失败；42 等待人工决策（`HUMAN_DECISION_NEEDED`）或旧配置远程确认（`REMOTE_CONFIRM_NEEDED`）。
 
 ## 版本
 

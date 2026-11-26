@@ -1,6 +1,6 @@
 # agent-pipeline
 
-多 Agent 软件开发流水线编排器，目标是帮助用户**「从一个想法自动走到部署」**或**「一条修复需求自动走到可发布修复」**：把用户需求拆成固定阶段，每阶段交由指定角色/模型完成，顺序衔接直至全流程结束。两条流水线：新功能走开发七阶段（产品规划 → 需求拆解 → 架构设计 → 开发编码 → 代码审查 → 测试 → 部署）；功能修复走修复五阶段（`--pipeline fix --requirement "<问题描述>"`，或 GitHub Issue 自动触发），验证不通过自动回炉重修。每个角色自带持久知识库（跨任务可复用经验）、过程记忆（执行摘要/交接便签/用户修订自动入记忆）与动态委托能力（发现本阶段更适合其他角色时自动换人重跑）。阶段间用 `artifacts/` 传递产物；支持人工确认、远程确认、断点续跑、限额自动切换模型，并附带需求构建器。
+多 Agent 软件开发流水线编排器，目标是帮助用户**「从一个想法自动推进到可交付代码」**或**「一条修复需求自动推进到可发布修复」**。默认由独立项目经理负责启动派活、生成任务书、逐阶段验收、返工/退回上游、最终验收与人工升级；专业角色仍按固定阶段交付：开发七阶段（产品规划 → 需求拆解 → 架构设计 → 开发编码 → 代码审查 → 测试 → 部署），修复五阶段（分析 → 方案 → 修复 → 验证 → PR 描述，支持手动需求与 GitHub Issue）。专业角色通过 REPORT 反馈证据，项目经理通过 DECISION 控制路由，只有业务范围、生产发布、不可逆操作、授权或证据冲突等无权决策事项才升级人工。每个角色自带持久知识库、过程记忆与动态委托能力（项目经理门禁禁止委托）；阶段间用 `artifacts/` 传递产物，支持远程人工恢复、断点续跑、限额自动切换模型，并附带需求构建器。最终验收表示可交付/待部署，不表示已上线。
 
 遵循 **Agent Skills 开放标准**，一份 `SKILL.md` 可部署到 **WorkBuddy / CodeBuddy / zCode / Qoder / Marvis / Claude Code / Codex** 及任意自定义 agent CLI。编排器本身是纯 Node.js 脚本（**Node.js >= 18、零 npm 依赖、macOS / Linux / Windows 通用**），AI 能力来自当前宿主的 agent CLI。技能的完整行为契约（目标、输入、工作流与角色、执行步骤、输出格式、约束）见 [`SKILL.md` 的「技能契约」](SKILL.md#技能契约)。
 
@@ -33,8 +33,8 @@ node scripts/install.js --platform auto --scope user
 # 1) 演练：校验阶段链、提示词与 CLI 探测（不调用模型）
 node scripts/run-pipeline.js --project-name demo-app --project-root ./pipeline-run --work-dir ./pipeline-run --dry-run
 
-# 2) 正式运行：01/02 产出后暂停审阅，可回灌修改意见
-node scripts/run-pipeline.js --project-name demo-app --project-root ./pipeline-run --work-dir ./pipeline-run --interactive
+# 2) 正式运行：项目经理自动派活并逐阶段验收，只有无权决策时暂停
+node scripts/run-pipeline.js --project-name demo-app --project-root ./pipeline-run --work-dir ./pipeline-run
 ```
 
 `--project-root` 决定代码目录（默认 `<project-root>/<project-name>`），`--work-dir` 决定产物与日志；两者一起指定可把所有输出集中在一个目录、不污染当前工作区。
@@ -227,19 +227,20 @@ node scripts/run-pipeline.js --project-name demo-app --dry-run
 ## 4. 运行流水线
 
 ```bash
-# 全自动，或指定阶段范围
+# 默认项目经理模式，或明确指定阶段范围
 node scripts/run-pipeline.js --project-name demo-app --work-dir ./run
 node scripts/run-pipeline.js --project-name demo-app --from 04-develop --to 06-test --work-dir ./run
 
-# 只跑前置段（产品规划 + 需求拆解），确认后退出
-node scripts/run-pipeline.js --project-name demo-app --interactive --init-only --work-dir ./run
+# 只跑前置范围后退出；再次不带 --from 运行会从状态记录的下一阶段恢复
+node scripts/run-pipeline.js --project-name demo-app --to 02-requirements --work-dir ./run
 
 # 阶段失败 exit 2 后断点续跑；带修改意见重跑某阶段
 node scripts/run-pipeline.js --project-name demo-app --from 04-develop --work-dir ./run
 node scripts/run-pipeline.js --project-name demo-app --from 04-develop --amend "补充登录校验" --work-dir ./run
 
-# IDE / 聊天宿主：确认点写状态文件并 exit 42，交给外部转述与收集意见
-node scripts/run-pipeline.js --project-name demo-app --remote --work-dir ./run
+# 项目经理升级人工退出 42 后，按决策包 ID 恢复（不要重复传 --requirement/--from）
+node scripts/run-pipeline.js --project-name demo-app --work-dir ./run \
+  --resume-human human-123 --amend "人工决定：拒绝风险豁免并修复 C1"
 
 # 功能修复：现有功能故障/报错/行为不符，直接描述问题走修复流水线（见下节）
 node scripts/run-pipeline.js --project-name demo-app --project-dir ./demo-app \
@@ -257,11 +258,12 @@ node scripts/run-pipeline.js --project-name demo-app --project-dir ./demo-app \
 | `--pipeline feature\|fix` | 流水线预设：开发 7 阶段 / 修复 5 阶段，与 `--pipeline-config` 互斥 | `feature` |
 | `--requirement "<文本>"` | 需求原文写入 `artifacts/00-requirement.md`，作首阶段输入（两条流水线通用） | — |
 | `--from` / `--to` | 起止阶段 id | 首 / 末阶段 |
-| `--interactive` | confirm 阶段暂停审阅，可输入修改意见重跑 | 关闭 |
-| `--remote` | confirm 阶段写 `.confirm-state.json` 并 exit 42 | 关闭 |
-| `--init-only` | 跑到最后一个需确认的阶段即退出 | 关闭 |
-| `--amend "<意见>"` | 修订意见追加进 `--from` 阶段重跑 | — |
-| `--fix-rounds <n>` | 修复验证未通过时自动回炉重修的轮数，`0`=关闭 | 修复流配置默认 `2` |
+| `--interactive` | 项目经理升级人工时终端应答；旧配置用于 confirm 阶段审阅 | 关闭 |
+| `--remote` | 旧配置 confirm 阶段写 `.confirm-state.json` 并 exit 42；项目经理升级始终支持非交互退出 | 关闭 |
+| `--init-only` | 旧配置到最后一个 confirm 阶段；项目经理模式到本次范围内最后一个 confirm 阶段 | 关闭 |
+| `--amend "<意见>"` | 追加进 `--from` 阶段；或作为 `--resume-human` 的人工决策原文 | — |
+| `--resume-human <id>` | 按 `pm-escalation.json` 的 decisionId 恢复升级，必须同时提供 `--amend` | — |
+| `--fix-rounds <n>` | 仅旧配置修复回炉轮数，`0`=关闭；项目经理模式使用返工预算 | 修复流默认 `2` |
 | `--knowledge-dir <dir>` | 角色知识库目录（注入历史经验 + 沉淀新知识） | `<work-dir>/knowledge` |
 | `--no-knowledge` | 关闭角色知识库（不注入、不沉淀） | 关闭 |
 | `--no-memory` | 关闭角色记忆（执行摘要/交接便签/用户修订入记忆） | 关闭 |
@@ -273,9 +275,9 @@ node scripts/run-pipeline.js --project-name demo-app --project-dir ./demo-app \
 
 ### 阶段与产物
 
-7 个阶段与 7 个角色一一对应，**前一阶段完成后再进入下一阶段，不得跳过或调换顺序**；`--from` / `--to` 仅用于失败续跑或用户明确指定的范围。
+开发流保留 7 个专业阶段、7 个专业角色，另设独立 `project-manager` 控制角色。正常推进不得跳过专业阶段；项目经理验收不通过时，只能 `REWORK` 当前阶段或 `RETURN_UPSTREAM` 退回更早阶段。`--from` / `--to` 仅用于失败续跑、部分执行或用户明确指定的范围。
 
-| 序号·阶段 | 阶段 id | 当前执行角色 | agent id | 产物 | 需确认 |
+| 序号·阶段 | 阶段 id | 当前执行角色 | agent id | 产物 | 旧配置需确认 |
 |-----------|---------|--------------|----------|------|--------|
 | 1 产品规划 | `01-product-plan` | 产品规划引导师 | `product-manager` | `artifacts/01-prd.md` | 是 |
 | 2 需求拆解 | `02-requirements` | 需求拆解与功能点呈现专员 | `requirement-analyst` | `artifacts/02-tasks.md` | 是 |
@@ -287,22 +289,63 @@ node scripts/run-pipeline.js --project-name demo-app --project-dir ./demo-app \
 
 `artifacts/00-requirement.md` 是可选的需求输入（由需求构建器或 `--requirement` 生成），缺失时仅告警。每阶段会把 `input` 列出的前序产物全文拼进 prompt；提示词模板要求子 Agent 把文档正文输出到 stdout，由编排器统一落盘，禁止子 Agent 自行写产物文件。信息缺失或需求歧义时的确认规则见 [`SKILL.md` 的「约束」](SKILL.md#约束)。
 
+### 项目经理模式（默认）
+
+项目经理与 `product-manager` 是两个角色：前者控制交付，后者只负责 PRD。项目经理默认工具白名单为只读，不代替开发、测试、审查或运维角色提供证据；不支持工具白名单的适配器由提示词约束同一边界。
+
+```text
+用户需求
+  → 项目经理 dispatch：生成首阶段任务书
+  → 专业角色执行：正文 + REPORT（证据/问题/未验证/待决策）
+  → 项目经理 review：PROCEED / REWORK / RETURN_UPSTREAM / ESCALATE / COMPLETE
+  → 编排器执行路由：派活、返工、失效下游产物、暂停人工或生成验收单
+```
+
+| 路由 | 编排器动作 |
+|------|-----------|
+| `PROCEED` | 记录当前阶段通过，只为紧邻下一阶段写入任务书 |
+| `REWORK` | 重跑当前阶段，消耗单阶段与总返工预算 |
+| `RETURN_UPSTREAM` | 退回更早阶段，目标及下游产物、已完成验收结论失效 |
+| `ESCALATE` | 写人工升级包，非交互退出 42；恢复时保留状态、历史与已花预算 |
+| `COMPLETE` | 仅完整流水线最后阶段可用，生成 `99-acceptance.md`，状态为可交付/待部署 |
+
+默认预算：单阶段最多返工 2 次、总返工 6 次；预算耗尽会升级人工。开发流成功路径约 15 次 CLI 调用，修复流约 11 次，返工/升级会增加调用。缺少 REPORT 不得放行，最后阶段不得用 PROCEED 冒充完成。
+
+管理产物：
+
+| 文件 | 用途 |
+|------|------|
+| `artifacts/pm-handoff.md` | 当前目标阶段任务书 |
+| `artifacts/pm-decisions.md` | 派活、验收、返工与升级决策日志 |
+| `artifacts/pm-project-state.json` | 原子持久化状态、已完成阶段、失效产物、返工预算、历史与 pending |
+| `artifacts/pm-escalation.json` | 人工决策包；恢复需要 `pending.decisionId` |
+| `artifacts/99-acceptance.md` | 最终验收结论与剩余风险 |
+
+人工升级退出 42 后读取 `pm-escalation.json`，转述问题、原因、选项、推荐、影响和证据，再执行：
+
+```bash
+node scripts/run-pipeline.js --project-name demo-app --work-dir ./run \
+  --resume-human <decisionId> --amend "<人工决策原文>"
+```
+
+恢复时不要重复传 `--requirement` 或显式 `--from`，否则会开启新管理运行。`--interactive` 可在终端选择推荐方案、输入自定义决定或停止项目。
+
 ### 功能修复流水线（`--pipeline fix`）
 
 现有功能出现故障、报错、行为与预期不符时，不必提 GitHub Issue 等监听，直接描述问题走修复 5 阶段（配置 `config/issue-pipeline.json`）：
 
 ```bash
-# 交互式：修复方案（阶段 2）产出后暂停确认，y 继续 / 输入修改意见重跑
+# 默认由项目经理验收修复方案；需要人工决策时才暂停
 node scripts/run-pipeline.js --project-name my-app --project-dir ./my-app \
   --pipeline fix --requirement "导出 CSV 在 Windows 下中文乱码，复现步骤……" \
-  --work-dir ./run-fix --interactive
+  --work-dir ./run-fix
 
-# 全自动；验证未通过自动回炉重修，最多 3 轮（--fix-rounds 覆盖默认 2，0=关闭）
+# 完整修复流；VERDICT: FAIL 由项目经理决定返工/退回上游，不自动跳过验证
 node scripts/run-pipeline.js --project-name my-app --project-dir ./my-app \
-  --pipeline fix --requirement "……" --work-dir ./run-fix --fix-rounds 3
+  --pipeline fix --requirement "……" --work-dir ./run-fix
 ```
 
-| 序号·阶段 | 阶段 id | 当前执行角色 | agent id | 产物 | 需确认 |
+| 序号·阶段 | 阶段 id | 当前执行角色 | agent id | 产物 | 旧配置需确认 |
 |-----------|---------|--------------|----------|------|--------|
 | 1 修复需求分析 | `01-issue-analysis` | 代码审查工程师 | `code-reviewer` | `artifacts/issue-analysis.md` | 否 |
 | 2 修复方案设计 | `02-fix-plan` | 架构师 | `architect` | `artifacts/issue-fix-plan.md` | 是 |
@@ -311,11 +354,12 @@ node scripts/run-pipeline.js --project-name my-app --project-dir ./my-app \
 | 5 PR 描述 | `05-pr-summary` | 运维工程师 | `devops` | `artifacts/issue-pr.md` | 否 |
 
 - 需求原文由 `--requirement` 写入 `artifacts/00-requirement.md`，作为阶段 1 的输入；`--from <阶段> --amend "<意见>"` 断点重跑同样适用。
-- **自动回炉**：阶段 4 报告末行标记 `VERDICT: FAIL` 且轮数未用尽时，编排器自动携带验证报告回到阶段 3 重修（`config/issue-pipeline.json` 的 `retry` 块控制检查阶段、失败标记与回炉点，默认最多 2 轮）；轮数用尽则如实推进并在日志中注明。
+- **项目经理验收**：阶段 4 报告末行必须保留 `VERDICT: PASS|FAIL`。FAIL、缺少 REPORT 或证据不足时，项目经理可 `REWORK` 开发修复、`RETURN_UPSTREAM` 修正分析/方案，或在超出权限时 `ESCALATE`；不得直接完成。
+- **旧配置自动回炉**：仅当 `projectManager` 缺失或 `enabled: false` 时，命中 `VERDICT: FAIL` 且轮数未用尽就回阶段 3 重修（`retry` 配置，`--fix-rounds` 覆盖，默认 2，`0` 关闭）；缺少 VERDICT 或轮数用尽均失败退出。
 
 ### 角色知识库、记忆与动态委托
 
-每个角色默认同时具备三种持久能力，同一工作目录下的重复运行持续积累：
+每个专业角色默认同时具备三种持久能力；项目经理也使用知识库与记忆，但验收门禁禁止动态委托。同一工作目录下的重复运行持续积累：
 
 | 能力 | 存什么 | 位置 | 开关 |
 |------|--------|------|------|
@@ -348,11 +392,11 @@ handoff: 用户要求保留存量表结构，初步分析见正文
 
 编排器自动换 `target` 角色重跑本阶段：原角色的初步产出与交接说明作为上下文带入，知识/记忆沉淀与产物归属最终执行者，日志记录委托链。边界：只能委托给 `agents.json` 内角色；每阶段最多换一次执行角色（防 A→B→A 循环）；**只换执行者，不改变阶段顺序、产物路径与验收要求**。
 
-### 确认机制
+### 人工升级与旧版确认机制
 
-- `--interactive`：终端里 `y` 继续，或输入多行修改意见并以 `!done` 结束，让该阶段重跑；
-- `--remote`：写 `artifacts/.confirm-state.json`、打印 `REMOTE_CONFIRM_NEEDED`、`exit 42`；外部读取后「确认 → `--from <nextStageId>`」或「修改 → `--from <stageId> --amend "<意见>"`」续跑；
-- 协议细节与状态文件 schema 见 [`references/remote-confirm.md`](references/remote-confirm.md)。
+- **项目经理模式（默认）**：`--interactive` 在终端应答升级；非交互模式（包括 `--remote`）写 `artifacts/pm-escalation.json`、打印 `HUMAN_DECISION_NEEDED`、退出 42。外部驱动方用 `--resume-human <decisionId> --amend "<人工决定>"` 恢复。
+- **旧配置**（`projectManager` 缺失或 `enabled: false`）：`--interactive` 在 confirm 阶段终端审阅；`--remote` 写 `artifacts/.confirm-state.json`、打印 `REMOTE_CONFIRM_NEEDED`、退出 42，外部按「确认 → `--from <nextStageId>`；修改 → `--from <stageId> --amend`」续跑。
+- 两种协议详情见 [`references/remote-confirm.md`](references/remote-confirm.md)。GitHub Issue 监听器将项目经理升级记录为 `awaiting-human`，不修改远端 Issue 状态。
 
 ---
 
@@ -381,7 +425,7 @@ node scripts/req-builder.js --select A --auto-run --project-name demo-app --work
 | `intervalMs` | 轮询间隔，默认 300000 |
 | `pipelineConfig` | 修复流水线配置，默认 `config/issue-pipeline.json`（非默认值时以 `--pipeline-config` 传入） |
 | `processExisting` | 是否处理存量 Issue，默认 `false` |
-| `maxFixRounds` | 验证未通过时自动回炉重修的最大轮数（透传 `--fix-rounds`），默认 2 |
+| `maxFixRounds` | 仅旧配置验证未通过时自动回炉的最大轮数（透传 `--fix-rounds`），默认 2 |
 
 ```bash
 export GITHUB_TOKEN=ghp_xxx
@@ -389,7 +433,7 @@ node scripts/watch-issues.js --once --work-dir ./run       # 单轮，适合 cro
 node scripts/watch-issues.js --work-dir ./run              # 默认常驻轮询（不带 --once 即常驻）
 ```
 
-首次运行只建立基线、不处理存量 Issue。每个新 Issue 触发一次修复流水线（`--pipeline fix`，Issue 原文经 `--requirement` 注入）：Issue 分析 → 修复方案 → 修复开发 → 修复验证 → PR 描述；验证报告末行 `VERDICT: FAIL` 时自动回炉重修（≤ `maxFixRounds` 轮）。**每个 Issue 的产物写在自己的 `<work-dir>/issue-<N>/artifacts/` 下**，互不覆盖；监听状态文件 `data/processed-issues.json` 仍在 `--work-dir` 根。
+首次运行只建立基线、不处理存量 Issue。每个新 Issue 触发一次修复流水线（`--pipeline fix`，Issue 原文经 `--requirement` 注入）：Issue 分析 → 修复方案 → 修复开发 → 修复验证 → PR 描述；默认由项目经理验收，`VERDICT: FAIL` 不得直接放行，旧配置才按 `maxFixRounds` 自动回炉。项目经理需要人工时结果为 `awaiting-human`，不会修改远端 Issue 状态。**每个 Issue 的产物写在自己的 `<work-dir>/issue-<N>/artifacts/` 下**，互不覆盖；监听状态文件 `data/processed-issues.json` 仍在 `--work-dir` 根。
 
 ### 拉取项目代码
 
@@ -449,16 +493,16 @@ node scripts/init-project.js --url git@github.com:org/repo.git --name demo-app -
 
 ## 8. 运行时约定与退出码
 
-- 产物 `artifacts/`、日志 `logs/`、状态文件 `data/`、`.confirm-state.json` / `.req-state.json` 一律写 `--work-dir`（默认当前目录），安装目录可保持只读，且这些路径已被 `.gitignore` 忽略。
+- 产物 `artifacts/`、日志 `logs/`、状态文件 `data/`、`.confirm-state.json` / `.req-state.json` 与项目经理状态/升级包一律写 `--work-dir`（默认当前目录），安装目录可保持只读，且这些路径已被 `.gitignore` 忽略。
 - 适配器是**流水线级**的：一次运行只用一个 CLI 方言，不支持按阶段混用；可按阶段覆盖的只有 `model` / `fallbackModels`。
-- 阶段失败时 `exit 2`，前序产物保留；远程确认挂起时 `exit 42`。
+- 阶段失败时 `exit 2`，前序产物保留；人工升级或远程确认挂起时 `exit 42`。
 
 | 退出码 | 含义 |
 |--------|------|
 | `0` | 成功 |
 | `1` | 配置或 CLI 错误 |
 | `2` | 阶段执行失败 |
-| `42` | 等待远程确认（`REMOTE_CONFIRM_NEEDED`） |
+| `42` | 等待人工决策（`HUMAN_DECISION_NEEDED`）或旧配置远程确认（`REMOTE_CONFIRM_NEEDED`） |
 
 ---
 
@@ -475,14 +519,14 @@ agent-pipeline/
 │       └── release.yml          GitHub Actions：打 tag 时自动打包 zip 并上传到 Release
 ├── config/
 │   ├── cli.json                 适配器、hostCommands、超时、权限
-│   ├── agents.json              7 个子代理角色与模型
-│   ├── pipeline.json            主流水线 7 阶段
-│   ├── issue-pipeline.json      Issue 修复流 5 阶段
+│   ├── agents.json              8 个角色（项目经理 + 7 个专业角色）与模型
+│   ├── pipeline.json            开发流 7 阶段 + 项目经理配置
+│   ├── issue-pipeline.json     修复流 5 阶段 + 项目经理/旧回炉配置
 │   └── github.json              Issue 监听配置模板
-├── prompts/                     13 个阶段提示词模板
+├── prompts/                     14 个提示词模板（项目经理 + 12 个专业阶段）
 ├── references/
 │   ├── platform-compat.md       五平台路径、元数据、CLI 差异与验收清单
-│   └── remote-confirm.md        远程确认协议（exit 42 状态文件 schema）
+│   └── remote-confirm.md        远程人工决策/旧版确认协议（exit 42 状态文件 schema）
 └── scripts/
     ├── install.js               一键安装 / 卸载到五个宿主，支持 --from-github 远程安装
     ├── version.js               版本号管理 CLI
@@ -492,6 +536,8 @@ agent-pipeline/
     ├── watch-issues.js          GitHub Issue 监听
     └── lib/
         ├── adapter.js           CLI 适配层（宿主探测与方言翻译）
+        ├── manager-protocol.js  REPORT/DECISION 协议解析与校验
+        ├── manager-router.js    状态、返工预算与产物失效
         ├── platforms.js         五宿主安装位置共享定义
         └── version.js           版本权威读取、同步、发版与盘点
 ```
@@ -558,6 +604,6 @@ node scripts/install.js --platform auto --scope user --force
 | `README.md` | 使用者 | 安装、CLI 配置、完整命令、产物链、故障排查、版本管理 |
 | [`CHANGELOG.md`](CHANGELOG.md) | 维护者 | 版本历史、待办问题区、SemVer 规则与迭代闭环 |
 | [`references/platform-compat.md`](references/platform-compat.md) | 维护者 | 五平台发现路径、frontmatter 差异、CLI 方言、安装验收清单 |
-| [`references/remote-confirm.md`](references/remote-confirm.md) | 集成方 | 远程确认状态文件 schema 与外部驱动循环 |
+| [`references/remote-confirm.md`](references/remote-confirm.md) | 集成方 | 项目经理人工升级包、`--resume-human` 恢复与旧版确认状态文件 schema |
 
 作者：trexwb · 源码：<https://github.com/trexwb/workflows>

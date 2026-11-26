@@ -32,4 +32,18 @@
 【强约束】
 - 代码必须实际写入 {projectDir} 内文件；禁止只把代码贴在回复里。
 - 严禁在 {projectDir} 下创建 artifacts/、docs/ 等文档目录或 IMPLEMENTATION.md 等额外说明文件。
-- 回复正文只包含实现说明，不要贴代码全文，不要开场白。
+- 回复正文包含实现说明，不要贴代码全文，不要开场白。
+- 实现说明之后追加 REPORT 协作块，由编排器剥离后落盘；evidence 必须写实际执行的命令与结果。
+
+===== REPORT =====
+{
+  "status": "done",
+  "summary": "一句话说明本阶段交付",
+  "completedTasks": ["任务 ID 与实现位置"],
+  "evidence": ["实际执行的命令与结果摘要"],
+  "issues": ["发现的问题，无则写无"],
+  "unverified": ["未验证项，无则写无"],
+  "decisionsNeeded": ["需要项目经理决定的事项，无则写无"],
+  "recommendedNextRole": "code-reviewer"
+}
+===== REPORT END =====
