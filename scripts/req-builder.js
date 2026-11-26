@@ -101,19 +101,35 @@ function main() {
 
     // 经适配层调用（无 agent 角色，纯 prompt 调用）
     const cliCfg = adapter.loadCliConfig(ROOT, args['cli-config'] ? path.resolve(args['cli-config']) : null, { adapter: args['adapter'] });
+    cliCfg.rotation = Object.assign({ enabled: true, stateFile: 'cli-rotation.json' }, cliCfg.rotation || {});
+    if (!path.isAbsolute(cliCfg.rotation.stateFile)) cliCfg.rotation.stateFile = path.join(WORK_ROOT, cliCfg.rotation.stateFile);
     let runner;
     try { runner = adapter.createRunner(cliCfg); } catch (e) { console.error('错误：' + e.message); process.exit(1); }
+    if (cliCfg.hostWarning) console.error('警告：' + cliCfg.hostWarning);
+    const rot = runner.rotation;
+    if (rot && rot.total > 1) {
+      console.error(rot.rotated && rot.index >= 0
+        ? `[req-builder] 宿主 CLI 轮询：池 [${rot.pool.join(', ')}] → 本次 ${rot.pool[rot.index]}（第 ${rot.index + 1}/${rot.total}）`
+        : `[req-builder] 宿主 CLI 固定为 ${cliCfg.hostKey || runner.name}（指定，不轮询），池 [${rot.pool.join(', ')}]`);
+    }
 
+    // 候选链：--model 显式指定 > 适配器自定义模型 > CLI 自带模型（无自定义模型时即 null，不拼 --model）
     const dynamic = runner.capabilities && runner.capabilities.model ? runner.extraModels() : [];
-    const model = args.model || dynamic[0] || null;
-    const fallback = runner.supportsFallbackFlag ? (args['fallback-model'] || dynamic[1] || null) : null;
+    const modelList = [];
+    if (args.model && args.model !== 'auto') modelList.push(args.model);
+    if (args['fallback-model'] && args['fallback-model'] !== 'auto' && !modelList.includes(args['fallback-model'])) modelList.push(args['fallback-model']);
+    for (const m of dynamic) if (m && !modelList.includes(m)) modelList.push(m);
+    if (!modelList.length) modelList.push(null);
+    const modelLabel = (m) => (m === null ? 'CLI自带' : String(m));
+    const stageTimeoutMs = cliCfg.timeoutMs || 600000;
+    const namedCapMs = cliCfg.modelAttemptTimeoutMs || 0;
 
     if (dryRun) {
       console.log('===== 演练模式：将发送给 AI 的完整提示词 =====\n');
       console.log(prompt);
       console.log('\n===== 适配器与模型 =====');
       console.log(`适配器=${runner.name}，命令=${runner.label()}`);
-      console.log(`模型=${model || '默认'}${fallback ? `，回退=${fallback}` : ''}`);
+      console.log(`模型候选链=${modelList.map(modelLabel).join(' → ')}（命名模型单次上限 ${namedCapMs ? Math.round(namedCapMs / 1000) + 's' : '同整段'}，整段 ${Math.round(stageTimeoutMs / 1000)}s）`);
       return;
     }
 
@@ -123,19 +139,33 @@ function main() {
       process.exit(1);
     }
 
-    log(`[req-builder] 开始整理需求（${needText.length} 字符），适配器=${runner.name}，模型=${model || '默认'}${fallback ? '，回退=' + fallback : ''}`);
-    const result = runner.run({
-      prompt,
-      agentId: null,
-      agentDef: null,
-      agentsJson: '{}',
-      model,
-      fallbackModel: fallback,
-      cwd: WORK_ROOT,
-      timeoutMs: cliCfg.timeoutMs || 600000,
-      permissions: cliCfg.permissions,
-      outputFormat: cliCfg.outputFormat,
-    });
+    let result = null;
+    for (let i = 0; i < modelList.length; i++) {
+      const model = modelList[i];
+      const named = model !== null && model !== 'auto';
+      const timeoutMs = (named && namedCapMs > 0 && namedCapMs < stageTimeoutMs) ? namedCapMs : stageTimeoutMs;
+      const fallback = runner.supportsFallbackFlag ? (modelList[i + 1] || null) : null;
+      log(`[req-builder] 开始整理需求（${needText.length} 字符），适配器=${runner.name}，模型=${modelLabel(model)}${fallback ? '，回退=' + fallback : ''}，超时=${Math.round(timeoutMs / 1000)}s`);
+      result = runner.run({
+        prompt,
+        agentId: null,
+        agentDef: null,
+        agentsJson: '{}',
+        model,
+        fallbackModel: fallback,
+        cwd: WORK_ROOT,
+        timeoutMs,
+        permissions: cliCfg.permissions,
+        outputFormat: cliCfg.outputFormat,
+      });
+      if (result.status === 0) break;
+      const kind = adapter.classifyFailure(result, adapter.failureText(result.stderr, result.stdout));
+      if (kind && i < modelList.length - 1) {
+        log(`[req-builder] 模型 ${modelLabel(model)} ${adapter.FAILURE_LABELS[kind]}，自动切换候选 → ${modelLabel(modelList[i + 1])}`);
+        continue;
+      }
+      break;
+    }
     if (result.status !== 0) {
       const errText = (result.stderr || '').trim() || (result.stdout || '').trim() || ('exit=' + result.status);
       console.error('整理失败：' + errText.slice(0, 2000));

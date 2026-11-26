@@ -92,11 +92,13 @@ function usage() {
   --pipeline-config <p> 流水线配置路径，默认 config/pipeline.json（与 --pipeline 互斥）
   --agents-config <p>   子代理配置路径，默认 config/agents.json
   --cli-config <p>      CLI 适配配置路径，默认 config/cli.json
-  --adapter <name>      强制指定适配器（codebuddy/claude/codex/plain），覆盖配置
+  --adapter <name>      强制指定适配器（codebuddy/claude/codex/plain），同时关闭跨运行轮询
   --timeout-ms <n>      单阶段 CLI 超时毫秒数，覆盖 cli.json 的 timeoutMs
+  --model-timeout-ms <n> 单个命名模型的尝试超时毫秒数，覆盖 cli.json 的 modelAttemptTimeoutMs
+                        （默认 180000）：自定义模型卡死到此即换下一候选，不影响 CLI 自带模型的整段预算
 
 宿主环境变量：
-  AGENT_PIPELINE_HOST      声明当前宿主（workbuddy/codebuddy/zcode/qoder/marvis）
+  AGENT_PIPELINE_HOST      固定宿主（workbuddy/codebuddy/zcode/qoder/marvis/claude/codex），同时关闭轮询
   AGENT_PIPELINE_ADAPTER   强制适配器，优先级高于 --adapter
   *_CLI_CMD                覆盖宿主 CLI 路径（CODE_BUDDY_CMD/WORK_BUDDY_CMD/
                            ZCODE_CLI_CMD/QODER_CLI_CMD/MARVIS_CLI_CMD 等）
@@ -331,6 +333,28 @@ function main() {
   }
   const timeoutOverride = parseInt(args['timeout-ms'], 10);
   if (Number.isFinite(timeoutOverride) && timeoutOverride > 0) cliCfg.timeoutMs = timeoutOverride;
+  const modelTimeoutOverride = parseInt(args['model-timeout-ms'], 10);
+  if (Number.isFinite(modelTimeoutOverride) && modelTimeoutOverride > 0) cliCfg.modelAttemptTimeoutMs = modelTimeoutOverride;
+  // 跨运行轮游标写在 --work-dir 下：安装目录可能只读，不同项目各转各的
+  cliCfg.rotation = Object.assign({ enabled: true, stateFile: 'cli-rotation.json' }, cliCfg.rotation || {});
+  if (!path.isAbsolute(cliCfg.rotation.stateFile)) cliCfg.rotation.stateFile = resolveWork(cliCfg.rotation.stateFile);
+
+  // 运行内模型健康度：本轮已超时/不可用的模型排到候选链末尾，后续阶段不重复踩同一个坑
+  const modelHealth = new Map();
+  const healthKey = (m) => (m === null || m === undefined ? '<cli-default>' : String(m));
+  function markModelFailure(model, kind) {
+    const key = healthKey(model);
+    const prev = modelHealth.get(key) || { fails: 0, kinds: [] };
+    prev.fails += 1;
+    if (!prev.kinds.includes(kind)) prev.kinds.push(kind);
+    modelHealth.set(key, prev);
+  }
+  function rankByHealth(list) {
+    if (!modelHealth.size || list.length < 2) return list;
+    const failed = list.filter((m) => modelHealth.has(healthKey(m)));
+    if (!failed.length) return list;
+    return list.filter((m) => !modelHealth.has(healthKey(m))).concat(failed);
+  }
 
   const dryRun = !!args['dry-run'];
   const interactive = !!args['interactive'];
@@ -446,6 +470,7 @@ function main() {
     if (!dryRun) { console.error('错误：' + e.message); process.exit(1); }
     runner = dryRunRunner(e.message); // 告警统一在下方 CLI 探测段输出
   }
+  if (cliCfg.hostWarning) log('警告：' + cliCfg.hostWarning);
 
   // 探测 CLI 可用性（dry-run 也探测，便于提前发现问题；plain 适配器宽松处理）
   const probe = runner.probe();
@@ -466,6 +491,17 @@ function main() {
     }
   } else {
     log(`CLI 就绪：适配器=${runner.name}，命令=${runner.label()} ${String(probe.stdout || '').trim()}`);
+  }
+
+  // 轮询可见性：让用户看清「这次用的是哪个 CLI、池里还有谁、怎么固定」
+  const rot = runner.rotation;
+  if (!runner.placeholder && rot && rot.total > 1) {
+    if (rot.rotated && rot.index >= 0) {
+      const cursorRel = path.relative(workRoot, cliCfg.rotation.stateFile) || cliCfg.rotation.stateFile;
+      log(`宿主 CLI 轮询：本机池 [${rot.pool.join(', ')}] → 本次 ${rot.pool[rot.index]}（第 ${rot.index + 1}/${rot.total}），游标 ${cursorRel}；要固定宿主用 AGENT_PIPELINE_HOST 或 --adapter`);
+    } else {
+      log(`宿主 CLI 固定为 ${cliCfg.hostKey || runner.name}（${rot.reason === 'explicit-host' ? 'AGENT_PIPELINE_HOST' : '--adapter'} 指定），池 [${rot.pool.join(', ')}] 本轮不参与轮询`);
+    }
   }
 
   const vars = { projectName, projectDir };
@@ -839,7 +875,7 @@ function main() {
     rl.close();
   }
 
-  // 执行单个阶段：组装 prompt → 经适配器调用 CLI → 产物落盘；限额/过载自动切换模型重跑；
+  // 执行单个阶段：组装 prompt → 经适配器调用 CLI → 产物落盘；限额/超时/模型不可用自动切换候选重跑；
   // 角色输出 DELEGATE 标记段时换目标角色重跑本阶段（每阶段最多 DELEGATE_MAX_HOPS 次）
   function runStage(stage, extraAmend, opts = {}) {
     const baseAgentDef = agentsConfig.agents[stage.agent];
@@ -890,6 +926,7 @@ function main() {
       if (delegateCtx) prompt += delegateBlock(delegateCtx);
 
       // 模型候选链：阶段级显式模型 > 代理级模型 > 阶段/代理 fallbackModels > 适配器动态模型 > auto
+      // 无自定义模型的适配器（claude/codex/plain）候选链为空 → [null] → 不拼 --model，直接用 CLI 自带模型
       const canModel = !!(runner.capabilities && runner.capabilities.model);
       const explicitPrimary = (stage.model && stage.model !== 'auto')
         ? stage.model
@@ -905,16 +942,21 @@ function main() {
         }
         if (candidates.length && !candidates.includes('auto')) candidates.push('auto');
       }
-      const modelList = candidates.length ? candidates : [null];
+      const modelList = rankByHealth(candidates.length ? candidates : [null]);
+      const modelLabel = (m) => (m === null ? 'CLI自带' : String(m));
 
-      const timeoutMs = cliCfg.timeoutMs || 600000;
+      const stageTimeoutMs = cliCfg.timeoutMs || 600000;
+      const namedCapMs = cliCfg.modelAttemptTimeoutMs || 0;
       let finalStdout = null;
       for (let ci = 0; ci < modelList.length; ci++) {
         const current = modelList[ci];
         const next = modelList[ci + 1] || null;
         const fb = runner.supportsFallbackFlag ? next : null;
+        // 命名模型（含自定义模型）单独限时，卡死就快速换候选；CLI 自带模型独占整段预算
+        const named = current !== null && current !== 'auto';
+        const timeoutMs = (named && namedCapMs > 0 && namedCapMs < stageTimeoutMs) ? namedCapMs : stageTimeoutMs;
 
-        log(`[${stage.id}] ${stage.name}（agent=${agentId}${agentId !== stage.agent ? '(委托)' : ''}@${runner.name}）开始，模型=${current || '默认'}${fb ? `，CLI回退=${fb}` : ''}`);
+        log(`[${stage.id}] ${stage.name}（agent=${agentId}${agentId !== stage.agent ? '(委托)' : ''}@${runner.name}）开始，模型=${modelLabel(current)}${fb ? `，CLI回退=${fb}` : ''}，超时=${Math.round(timeoutMs / 1000)}s`);
         log(`[${stage.id}] 命令：${runner.label()} -p <prompt ${prompt.length} 字符> ...`);
 
         if (dryRun) { log(`[${stage.id}] [演练] 不实际执行`); return { ok: true, dry: true }; }
@@ -937,16 +979,19 @@ function main() {
         if (result.status === 0) { finalStdout = stdout; break; }
 
         const errText = `${stderr}\n${stdout}`;
-        const canSwitch = adapter.isQuotaError(errText) && ci < modelList.length - 1;
-        log(`[${stage.id}] 执行失败：exit=${result.status} signal=${result.signal || '-'}`);
-        if (canSwitch) {
-          log(`[${stage.id}] 检测到模型限额/过载（${current || '默认'}），自动切换候选模型 → ${modelList[ci + 1]}`);
+        // 超时 / 限额 / 模型不可用 / 连接异常都算「换个候选也许就行」，其余按阶段失败处理
+        const kind = adapter.classifyFailure(result, adapter.failureText(stderr, stdout));
+        log(`[${stage.id}] 执行失败：exit=${result.status} signal=${result.signal || '-'}${kind ? `（${adapter.FAILURE_LABELS[kind]}）` : ''}`);
+        if (kind) markModelFailure(current, kind);
+        if (kind && ci < modelList.length - 1) {
+          log(`[${stage.id}] 模型 ${modelLabel(current)} ${adapter.FAILURE_LABELS[kind]}，自动切换候选 → ${modelLabel(modelList[ci + 1])}`);
           if (stderr) log(`[${stage.id}] stderr: ${stderr.slice(0, 1500)}`);
           continue;
         }
         if (result.error) log(`[${stage.id}] error: ${result.error.message}`);
         if (stderr) log(`[${stage.id}] stderr: ${stderr.slice(0, 2000)}`);
         if (stdout) log(`[${stage.id}] stdout 尾部: ${stdout.slice(-2000)}`);
+        if (kind) log(`[${stage.id}] 候选模型已用尽（最后失败：${adapter.FAILURE_LABELS[kind]}），本阶段按失败处理`);
         return { ok: false, errText };
       }
 

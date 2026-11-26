@@ -12,6 +12,13 @@
     "codex"
   ],
   "timeoutMs": 3600000,
+  "modelAttemptTimeoutMs": 180000,
+  "_comment_timeouts": "timeoutMs 是单阶段总预算（CLI 自带模型用它）；modelAttemptTimeoutMs 只约束「显式命名的模型」（含 codebuddy 自定义模型），卡死即换下一候选，避免一个坏模型吃掉整阶段。",
+  "rotation": {
+    "enabled": true,
+    "stateFile": "cli-rotation.json",
+    "_comment": "跨运行轮询：本机探测到的所有 agent CLI 依次轮流作为单次运行的宿主，游标写在 --work-dir 下。设 enabled=false 或用 AGENT_PIPELINE_HOST / --adapter 指定即固定不轮。"
+  },
   "permissions": "skip",
   "outputFormat": "text",
   "hostCommands": {

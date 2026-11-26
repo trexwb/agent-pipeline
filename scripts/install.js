@@ -28,7 +28,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const {
   SKILL_NAME, CORE_PLATFORMS, PLATFORMS, EXCLUDE, detectedPlatforms,
 } = require('./lib/platforms');
@@ -39,56 +39,60 @@ const HOME = os.homedir();
 const GITHUB_REPO = 'trexwb/agent-pipeline';
 
 // ---------- 远程安装（--from-github） ----------
-// 从 GitHub Releases 下载 zip 并解压到临时目录，返回临时目录路径
-async function downloadFromGithub(version) {
-  // 先获取最新版本号（如果未指定 version）
-  let actualVersion = version;
-  if (!actualVersion) {
-    try {
-      const info = execSync(`curl -s https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, { encoding: 'utf8', timeout: 10000 });
-      const release = JSON.parse(info);
-      actualVersion = release.tag_name?.replace(/^v/, '');
-      if (!actualVersion) throw new Error('无法从响应中提取版本号');
-    } catch (e) {
-      throw new Error(`无法获取最新版本号：${e.message}\n请检查网络连接，或使用 --version <x.y.z> 指定版本`);
-    }
+// 版本号会拼进下载 URL 与文件名，先严格校验，避免任意字符串进入命令行
+const SEMVER_RE = /^\d+\.\d+\.\d+$/;
+function assertVersion(v) {
+  if (!SEMVER_RE.test(String(v))) throw new Error(`版本号格式应为 x.y.z（如 1.3.0），收到：${v}`);
+  return String(v);
+}
+
+// 外部命令一律走 argv 数组，不拼接 shell 字符串
+function runTool(cmd, args, opts) {
+  const r = spawnSync(cmd, args, Object.assign({ encoding: 'utf8', timeout: 150000 }, opts || {}));
+  if (r.error) throw new Error(`${cmd} 执行失败：${r.error.message}（请确认已安装并在 PATH 中）`);
+  if (r.status !== 0) {
+    throw new Error(`${cmd} 退出码 ${r.status}：${String(r.stderr || r.stdout || '').trim().slice(0, 300)}`);
   }
+  return String(r.stdout || '');
+}
 
-  const zipName = `agent-pipeline-${actualVersion}.zip`;
-  const downloadUrl = `https://github.com/${GITHUB_REPO}/releases/download/v${actualVersion}/${zipName}`;
+function fetchLatestVersion() {
+  let v = '';
+  try {
+    const info = runTool('curl', ['-sS', '--connect-timeout', '10', '--max-time', '20',
+      `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`]);
+    v = String(JSON.parse(info).tag_name || '').replace(/^v/, '');
+    assertVersion(v);
+  } catch (e) {
+    throw new Error(`无法获取最新版本号：${e.message}\n请检查网络连接，或使用 --version <x.y.z> 指定版本`);
+  }
+  return v;
+}
 
-  // 创建临时目录
+// 下载 zip 并解压到临时目录，返回临时目录与解出的源目录
+function downloadAndExtract(version) {
+  assertVersion(version);
+  const zipName = `agent-pipeline-${version}.zip`;
+  const downloadUrl = `https://github.com/${GITHUB_REPO}/releases/download/v${version}/${zipName}`;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-pipeline-'));
   const zipPath = path.join(tmpDir, zipName);
   const extractDir = path.join(tmpDir, 'extracted');
-
   console.log(`[下载] ${downloadUrl}`);
-
-  // 下载 zip（带超时）
   try {
-    execSync(`curl -L --connect-timeout 10 --max-time 60 -o "${zipPath}" "${downloadUrl}"`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    runTool('curl', ['-L', '--fail', '--connect-timeout', '10', '--max-time', '120', '-o', zipPath, downloadUrl]);
+    fs.mkdirSync(extractDir, { recursive: true });
+    if (process.platform === 'win32') {
+      runTool('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+        `Expand-Archive -LiteralPath ${JSON.stringify(zipPath)} -DestinationPath ${JSON.stringify(extractDir)} -Force`]);
+    } else {
+      runTool('unzip', ['-q', zipPath, '-d', extractDir]);
+    }
   } catch (e) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    throw new Error(`下载失败：${e.message}\n请检查版本 v${actualVersion} 是否存在，或网络连接是否正常`);
+    throw new Error(`远程安装失败：${e.message}\n请确认版本 v${version} 已发布（GitHub Release 附带 ${zipName}）`);
   }
-
-  // 解压（使用 Node.js 内置或系统命令）
-  fs.mkdirSync(extractDir, { recursive: true });
-  try {
-    // 优先使用 unzip 命令（macOS/Linux 通常自带）
-    execSync(`unzip -q "${zipPath}" -d "${extractDir}"`, { encoding: 'utf8' });
-  } catch (e) {
-    // Windows 或无 unzip 时，使用 PowerShell 或 tar
-    if (process.platform === 'win32') {
-      execSync(`powershell -command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force"`, { encoding: 'utf8' });
-    } else {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-      throw new Error('解压失败：请安装 unzip 工具');
-    }
-  }
-
   console.log(`[解压] ${extractDir}`);
-  return { extractDir, tmpDir, version: actualVersion };
+  return { extractDir, tmpDir, version };
 }
 
 // 宿主路径表来自 scripts/lib/platforms.js，安装与版本盘点共用同一份定义，避免漂移。
@@ -262,7 +266,7 @@ function resolveTargets(args) {
   return targets;
 }
 
-async function main() {
+function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) { console.log(usage()); return 0; }
   const dryRun = !!args['dry-run'];
@@ -271,24 +275,32 @@ async function main() {
   const force = !!args.force;
   const fromGithub = !!args['from-github'];
 
-  // --from-github：从 GitHub Releases 下载安装
+  // --from-github：从 GitHub Releases 下载安装；--dry-run 只解析版本不下载
   let sourceRoot = ROOT;
+  let sourceLabel = ROOT;
   let tmpCleanup = null;
+  let remoteVersion = null;
   if (fromGithub) {
     if (linkMode) {
       console.error('错误：--from-github 不能与 --link 同时使用（远程下载无法建立软链）');
       return 1;
     }
-    const version = args.version || null;
-    const result = await downloadFromGithub(version);
-    sourceRoot = result.extractDir;
-    tmpCleanup = result.tmpDir;
-    console.log(`[远程安装] 版本 v${result.version}`);
+    remoteVersion = args.version ? assertVersion(args.version) : fetchLatestVersion();
+    if (dryRun) {
+      sourceLabel = `待下载 https://github.com/${GITHUB_REPO}/releases/download/v${remoteVersion}/agent-pipeline-${remoteVersion}.zip`;
+      console.log(`[远程安装] 演练模式：目标版本 v${remoteVersion}，不下载、不写入任何文件`);
+    } else {
+      const result = downloadAndExtract(remoteVersion);
+      sourceRoot = result.extractDir;
+      sourceLabel = result.extractDir;
+      tmpCleanup = result.tmpDir;
+      console.log(`[远程安装] 版本 v${remoteVersion}`);
+    }
   }
 
   try {
     const skill = fromGithub
-      ? { name: SKILL_NAME, version: args.version || 'latest', displayName: SKILL_NAME, description: '' }
+      ? { name: SKILL_NAME, version: remoteVersion, displayName: SKILL_NAME, description: '' }
       : readSkillMeta();
     if (!fromGithub) {
       const consistency = V.collect(sourceRoot);
@@ -303,7 +315,7 @@ async function main() {
     const targets = resolveTargets(args);
 
     console.log('[agent-pipeline] ' + (dryRun ? '演练模式，不写入任何文件' : (uninstall ? '卸载' : '安装'))
-      + ' | 版本 ' + skill.version + ' | 源目录 ' + sourceRoot);
+      + ' | 版本 ' + skill.version + ' | 源目录 ' + sourceLabel);
     if (uninstall && linkMode) console.log('[提示] --uninstall 会忽略 --link');
 
     let ok = 0; let skipped = 0; let failed = 0;
@@ -317,7 +329,7 @@ async function main() {
       if (uninstall) {
         if (!exists) { console.log('  跳过  ' + name + '：' + t.dir + '（不存在）'); skipped++; continue; }
         if (!isOurSkill(t.dir)) {
-          console.log('  跳过  ' + name + '：' + t.dir + '（不是不是本 skill，拒绝删除）'); skipped++; continue;
+          console.log('  跳过  ' + name + '：' + t.dir + '（不是本 skill，拒绝删除）'); skipped++; continue;
         }
         console.log('  卸载  ' + name + ' → ' + t.dir);
         if (!dryRun) {
@@ -363,15 +375,10 @@ async function main() {
       try { fs.rmSync(tmpCleanup, { recursive: true, force: true }); } catch (e) { /* 忽略清理失败 */ }
     }
   }
-  return failed ? 1 : 0;
 }
 
 try {
-  main().then((code) => process.exit(code)).catch((e) => {
-    console.error('[agent-pipeline] 错误：' + e.message);
-    console.error('\n' + usage());
-    process.exit(1);
-  });
+  process.exit(main());
 } catch (e) {
   console.error('[agent-pipeline] 错误：' + e.message);
   console.error('\n' + usage());
