@@ -1,14 +1,14 @@
 ---
 name: agent-pipeline
-version: 1.3.0
+version: 1.4.0
 display_name: 多 Agent 开发流水线
-description: 多 Agent 软件开发流水线编排器，由独立项目经理负责启动派活、任务书、逐阶段验收、返工/退回上游、最终验收与人工升级，专业角色仍按固定阶段交付。开发流水线含产品规划、需求拆解、架构设计、开发编码、代码审查、测试、部署 7 个专业阶段；修复流水线含分析、方案、修复、验证、PR 描述 5 个专业阶段，支持手动需求与 GitHub Issue。专业角色通过 REPORT 反馈证据，项目经理通过 DECISION 路由；只有业务范围、生产发布、不可逆操作、授权或证据冲突等无权决策事项才升级人工。阶段间用 artifacts 传递产物，支持远程人工恢复、断点续跑、限额自动换模型、角色知识库、过程记忆与动态委托；旧配置自动回退原人工确认/回炉逻辑。This skill should be used when 用户想从一个想法自动走到可交付代码、要求项目经理编排与验收多 Agent 协作、想让不同阶段使用不同角色或模型、要积累复用经验或任务记忆、要生成 A/B 双版本需求、要修复现有功能或运行 GitHub Issue 自动修复循环。触发词包括 项目经理、自动编排、流水线、pipeline、从需求到开发完成、多 Agent 协作、阶段验收、功能修复、角色知识库、角色记忆、动态委托、issue 自动修复。适用于 WorkBuddy、CodeBuddy、zCode、Qoder、Marvis、Claude Code、Codex 及任意兼容 Agent Skills 的宿主或自定义 agent CLI。不用于单文件小改动、简单问答或直接的代码片段生成。
+description: 多 Agent 软件开发流水线编排器，由独立项目经理负责启动派活、任务书、逐阶段验收、返工/退回上游、最终验收与人工升级，专业角色仍按固定阶段交付。开发流水线含产品规划、需求拆解、架构设计、开发编码、代码审查、测试、部署 7 个专业阶段；修复流水线含分析、方案、修复、验证、PR 描述 5 个专业阶段，支持手动需求与 GitHub Issue。专业角色通过 REPORT 反馈证据，项目经理通过 DECISION 路由；只有业务范围、生产发布、不可逆操作、授权或证据冲突等无权决策事项才升级人工。阶段间用 artifacts 传递产物，支持远程人工恢复、断点续跑、多宿主 CLI 轮询与超时/限额/模型不可用自动换模型、角色知识库、过程记忆与动态委托；旧配置自动回退原人工确认/回炉逻辑。This skill should be used when 用户想从一个想法自动走到可交付代码、要求项目经理编排与验收多 Agent 协作、想让不同阶段使用不同角色或模型、要积累复用经验或任务记忆、要生成 A/B 双版本需求、要修复现有功能或运行 GitHub Issue 自动修复循环。触发词包括 项目经理、自动编排、流水线、pipeline、从需求到开发完成、多 Agent 协作、阶段验收、功能修复、角色知识库、角色记忆、动态委托、issue 自动修复。适用于 WorkBuddy、CodeBuddy、zCode、Qoder、Marvis、Claude Code、Codex 及任意兼容 Agent Skills 的宿主或自定义 agent CLI。不用于单文件小改动、简单问答或直接的代码片段生成。
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
 # 多 Agent 开发流水线（agent-pipeline）
 
-把软件开发拆成固定专业阶段，由独立子 Agent（角色 + 系统提示词 + 模型 + 工具白名单）执行；项目经理在阶段之间派活与验收，编排器负责组装 prompt → 调用宿主 agent CLI → 落盘产物 → 执行结构化路由 / 人工升级 / 断点续跑 / 限额自动切换模型。默认启用项目经理，旧配置可回退原人工确认模式。
+把软件开发拆成固定专业阶段，由独立子 Agent（角色 + 系统提示词 + 模型 + 工具白名单）执行；项目经理在阶段之间派活与验收，编排器负责组装 prompt → 调用宿主 agent CLI → 落盘产物 → 执行结构化路由 / 人工升级 / 断点续跑 / 跨运行宿主轮询 / 超时、限额、模型不可用自动切换模型。默认启用项目经理，旧配置可回退原人工确认模式。
 
 本 skill 是**纯 Node.js 编排壳**（Node >= 18，零 npm 依赖），自身不实现 AI 能力，AI 能力来自当前宿主的 agent CLI。
 
@@ -171,7 +171,7 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 本节是给加载了本 skill 的宿主 Agent 的操作指令。所有路径以 **skill 根目录**（`SKILL.md` 所在目录，下称 `<SKILL_DIR>`）为基准；安装后的目录可能只读，**所有运行时产物必须写在工作目录而非 `<SKILL_DIR>`**。
 
 1. **定位**。确定 `<SKILL_DIR>` 绝对路径，并确定工作目录 `<WORK_DIR>`：优先使用用户指定的目录，否则用当前项目根目录。执行 `node --version` 确认 Node >= 18。
-2. **确认宿主 CLI**。运行 `node <SKILL_DIR>/scripts/run-pipeline.js --dry-run --project-name <项目名>` 查看探测到的适配器。宿主可通过 `AGENT_PIPELINE_HOST` 指定（取值 `workbuddy` / `codebuddy` / `zcode` / `qoder` / `marvis`），未指定时按环境变量与系统命令自动探测。若探测失败，引导用户安装该宿主的 CLI，或改用 `--adapter plain` 并配置 `plain.command`。
+2. **确认宿主 CLI**。运行 `node <SKILL_DIR>/scripts/run-pipeline.js --dry-run --project-name <项目名>` 查看探测到的宿主池与本次选中项。未指定宿主时按**跨运行轮询**在本机所有已安装的 agent CLI 之间轮流选取（游标 `<work-dir>/cli-rotation.json`），避免装了多个 CLI 却永远只调用同一个。要固定宿主时设 `AGENT_PIPELINE_HOST`（取值 `workbuddy` / `codebuddy` / `zcode` / `qoder` / `marvis` / `claude` / `codex`），要固定方言时用 `--adapter`。若一个都没探测到，引导用户安装该宿主的 CLI，或改用 `--adapter plain` 并配置 `plain.command`。
 3. **选择入口**。
    - 需求模糊：先 `node <SKILL_DIR>/scripts/req-builder.js --guide` 取得 7 维度引导，收集用户回答后 `--build "<需求文本>"` 生成 A/B 双版本，把两个版本呈现给用户选择，再用 `--select A|B` 写入 `artifacts/00-requirement.md`。可加 `--auto-run --project-name <项目名>` 自动续跑。
    - 新功能需求明确：直接 `node <SKILL_DIR>/scripts/run-pipeline.js --project-name <项目名>`；项目经理会派活并逐阶段验收。
@@ -247,8 +247,9 @@ node scripts/watch-issues.js               # 默认常驻轮询（不带 --once 
 | `--no-delegate` | 关闭动态委托（角色声明换更合适角色执行本阶段） | false |
 | `--dry-run` | 只打印命令不执行 | false |
 | `--pipeline-config` / `--agents-config` / `--cli-config` | 配置路径覆盖 | `config/` 下默认值 |
-| `--adapter` | 强制适配器 | auto |
+| `--adapter` | 强制适配器（同时关闭宿主轮询） | auto |
 | `--timeout-ms` | 单阶段 CLI 超时 | `config/cli.json` 的 `timeoutMs` |
+| `--model-timeout-ms` | 单个命名模型（含自定义模型）的尝试超时，到点即换下一候选 | `config/cli.json` 的 `modelAttemptTimeoutMs`（180000） |
 
 ## 多平台兼容与安装
 
@@ -287,25 +288,27 @@ node scripts/install.js --platform auto --scope user --uninstall
 
 `scripts/lib/adapter.js` 把统一的「prompt + 角色 + 模型」翻译成具体 CLI 参数，`run-pipeline.js` 每阶段只经这一层调用一次 CLI。
 
-| 适配器 | CLI 命令 | 角色注入 | 模型 | 限额回退 | 备注 |
-|--------|----------|----------|------|----------|------|
-| `codebuddy` | `codebuddy` / `cbc` / `workbuddy` | 原生 `--agent --agents` | `--model` | `--fallback-model` + 换模型重跑 | 唯一支持工具白名单、`effort`、`maxTurns`；WorkBuddy 内置 CLI 与 CodeBuddy 同源，自动归入此适配器 |
-| `claude` | `claude` | `--append-system-prompt` | `--model` | 仅换模型重跑 | 无原生多代理 |
-| `codex` | `codex` | 角色拼进任务头部 | `-m` | 仅换模型重跑 | `codex exec --skip-git-repo-check` |
-| `plain` | `plain.command` 或宿主默认命令 | 角色拼进 prompt | 不支持 | 不支持 | zCode / Qoder / Marvis 等 CLI 的通用兜底 |
+| 适配器 | CLI 命令 | 角色注入 | 模型 | 失败换候选 | 备注 |
+|--------|----------|----------|------|------------|------|
+| `codebuddy` | `codebuddy` / `cbc` / `workbuddy` | 原生 `--agent --agents` | `--model` + 宿主 `models.json` 自定义模型 | `--fallback-model` + 换模型重跑 | 唯一支持工具白名单、`effort`、`maxTurns`；WorkBuddy 内置 CLI 与 CodeBuddy 同源，自动归入此适配器 |
+| `claude` | `claude` | `--append-system-prompt` | 仅阶段/代理显式指定 | 换模型重跑 | 无自定义模型清单，默认不拼 `--model`，即用 Claude CLI 自带模型 |
+| `codex` | `codex` | 角色拼进任务头部 | 仅阶段/代理显式指定 | 换模型重跑 | `codex exec --skip-git-repo-check`；默认用 Codex CLI 自带模型 |
+| `plain` | `plain.command` 或宿主默认命令 | 角色拼进 prompt | 不支持 | 不支持 | zCode / Qoder / Marvis 等 CLI 的通用兜底，始终用该 CLI 自带模型 |
 
-选择优先级：`AGENT_PIPELINE_ADAPTER` 环境变量 > `--adapter` > `config/cli.json` 的 `adapter` > `autoDetect` 依次探测。宿主专属命令可用 `AGENT_PIPELINE_HOST` 指定，或用 `*_CLI_CMD` 环境变量覆盖。
+**宿主选择**：`AGENT_PIPELINE_HOST`（显式宿主）> `AGENT_PIPELINE_ADAPTER` / `--adapter`（显式方言）> **跨运行轮询**。轮询把本机探测到的所有 agent CLI 组成池（`codebuddy` / `cbc` 这类共用同一专属环境变量的别名折叠为一位），按 `config/cli.json` 的 `autoDetect` 顺序轮流取一位作为本次运行的宿主，游标写 `<work-dir>/cli-rotation.json`——装了多个 CLI 时会均匀触发，而不是永远命中列表第一项。日志打印池成员与本次位次；要固定宿主用 `AGENT_PIPELINE_HOST` 或 `--adapter`，或把 `rotation.enabled` 设为 `false`。
 
-约束：**适配器是流水线级的**，一次运行只用一个适配器，不支持按阶段混用；可按阶段覆盖的只有 `model` 与 `fallbackModels`。
+**模型切换**：候选链是「阶段级 `model` > 代理级 `model` > `fallbackModels` > 宿主自定义模型 > `auto`」，无自定义模型的适配器候选链为空，直接用该 CLI 自带模型。失败是否换下一候选取决于原因：超时、限额/过载、模型不存在或参数错、连接类（拒绝/重置/5xx）都属于「换一个也许就行」；CLI 未安装（ENOENT）与人为中断（Ctrl-C）不换。命名模型（含自定义模型）的单次尝试受 `modelAttemptTimeoutMs`（默认 180000）限制，卡死到点即切，不再拖满整阶段 `timeoutMs`；`auto` 或不指定模型时独占整段预算。同一轮运行内已失败的模型在后续阶段自动沉到候选链末尾。
+
+约束：**适配器是流水线级的**，一次运行只用一个适配器；轮询决定的是「本次运行用哪个」，不支持阶段内混用。可按阶段覆盖的只有 `model` 与 `fallbackModels`。
 
 ## 定制与扩展
 
 - **改阶段**：编辑 `config/pipeline.json`，增删 `stages` 项；旧配置中 `confirm: true` 标记人工确认点；`input` 指向前序产物；`output: null` 表示不落盘该阶段 stdout。项目经理模式下专业阶段仍不得跳过。
 - **项目经理模式**：`projectManager.enabled=false` 回退旧人工确认/回炉逻辑；`kickoff` 控制首次派活；`maxReworkRounds` / `maxTotalReworks` 控制返工预算；状态、交接、决策日志、升级包与验收单路径均可配置。
-- **改角色/模型**：编辑 `config/agents.json`；`model` 填 `auto` 或具体模型 ID，`fallbackModels` 为限额回退候选；阶段级配置优先于代理级。
+- **改角色/模型**：编辑 `config/agents.json`；`model` 填 `auto` 或具体模型 ID，`fallbackModels` 为失败回退候选（限额/超时/模型不可用/连接异常都会按序切换）；阶段级配置优先于代理级。
 - **改提示词**：编辑 `prompts/*.md`，支持 `{projectName}` / `{projectDir}` / `{userNeed}` 占位符。把同名文件放 `--work-dir` 下可覆盖内置模板，无需改动只读的安装目录。
 - **管知识库与记忆**：`knowledge/<agent-id>.md`、`memory/<agent-id>.md`、`memory/handoffs.md` 均为追加式 Markdown，可随时人工修剪过时条目；知识库跨项目共享用 `--knowledge-dir ~/.agent-pipeline/knowledge`；按角色关闭改 `agents.json` 的 `knowledge` / `memory` 字段；`--no-knowledge` / `--no-memory` / `--no-delegate` 全局关闭对应能力。
-- **换 CLI**：改 `config/cli.json` 的 `adapter` 或 `hostCommands`，详见 `references/platform-compat.md`。
+- **换 CLI**：多宿主共存时默认跨运行轮询；固定宿主改 `config/cli.json` 的 `host` / `rotation.enabled` 或设 `AGENT_PIPELINE_HOST`，双方言用 `adapter`，详见 `references/platform-compat.md`。
 
 ## 目录
 
@@ -347,6 +350,6 @@ agent-pipeline/
 
 ## 版本
 
-1.3.0（唯一权威来源：`meta.json` 的 `version` 字段）
+1.4.0（唯一权威来源：`meta.json` 的 `version` 字段）
 
 维护者用 `node scripts/version.js` 记录使用中问题、发版与校验一致性；版本历史与迭代流程见 `CHANGELOG.md`。升级各宿主已安装副本用 `node scripts/install.js --force`。

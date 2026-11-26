@@ -73,6 +73,24 @@ node scripts/install.js --platform auto --scope user --force
 <!-- 用 node scripts/version.js note "问题描述" 追加 -->
 <!-- NOTES:END -->
 
+## [1.4.0] - 2026-11-26
+
+> 多宿主 CLI 均匀轮询 + 自定义模型超时/不可用自动切换
+
+### Added
+- 宿主 CLI 跨运行轮询（cli.json 的 rotation，游标写入 --work-dir/cli-rotation.json）与四类失败自动换候选模型（超时/限额过载/模型不可用/连接异常），新增 modelAttemptTimeoutMs 与 --model-timeout-ms 约束单个命名模型尝试，tests/adapter.test.js 15 例覆盖
+
+### Changed
+- 无自定义模型的 CLI 明确使用 CLI 自带模型（日志显示「CLI自带」）；--adapter 或 AGENT_PIPELINE_HOST 指定宿主/方言即关闭轮询
+
+### Fixed
+- 远程安装改用 spawnSync argv 调用并严格校验版本号格式（消除注入面），--from-github 配合 --dry-run 不再真下载解压；修正卸载跳过文案错字
+
+### 本次归档的待办记录
+- 装了多个 agent CLI 时几乎每次都命中 codebuddy-cli：宿主探测按 autoDetect 顺序命中第一个就返回，其余已装 CLI 永远不参与
+- 自定义模型超时或不可用时不换模型，且要等满整阶段 timeoutMs（配置里是 1 小时）才失败，一个坏模型把整条流水线拖死
+- 远程安装（--from-github）即使带 --dry-run 也会真下载解压；--version 未校验就拼进 shell 字符串，存在命令注入面
+
 ## [1.3.0] - 2026-11-13
 
 > 新增角色过程记忆(执行摘要/交接便签/用户修订自动入记忆,重跑带出)与动态委托(DELEGATE 标记段换更合适角色重跑本阶段,每阶段最多一次)

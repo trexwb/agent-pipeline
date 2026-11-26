@@ -61,6 +61,8 @@ description: 做什么 + 何时触发
 | zCode | `zcode` | 未提供与 CodeBuddy 等价的多代理参数，走 `plain` | — |
 | Qoder | `qoder` / `qoder-cli` | 未提供与 CodeBuddy 等价的多代理参数，走 `plain` | — |
 | Marvis | 桌面助手，通常无 headless CLI | 走 `plain`（若已配置可用命令） | — |
+| Claude Code | `claude`（或 `CLAUDE_CLI_CMD`） | `--append-system-prompt` / `--max-turns` / `--model` | — |
+| Codex | `codex`（或 `CODEX_CLI_CMD`） | `codex exec`，角色拼进任务头 | — |
 
 `plain` 适配器把角色提示词拼进 prompt，通过 `config/cli.json` 的 `plain.command` 或 `hostCommands` 里的默认命令执行；`command` 为空会直接报错，避免静默失败。
 
@@ -97,7 +99,7 @@ node <SKILL_DIR>/scripts/run-pipeline.js --project-name smoke-test --dry-run --w
 1. 每个目标目录存在 `SKILL.md`，且 `name` 为 `agent-pipeline`，目录名一致。
 2. Marvis 目标目录存在 `meta.json`；WorkBuddy / CodeBuddy 目标存在 `_skillhub_meta.json`。
 3. 重启宿主或执行 `/skills reload` 后，skill 出现在可用列表里；用「帮我把这个需求自动编排到开发完成」验证触发。
-4. `--dry-run` 会报告探测到的宿主与适配器；未探测到 CLI 时只告警并继续校验阶段链，正式运行前需按第 4 节配置 `hostCommands` 或环境变量。
+4. `--dry-run` 会报告宿主池、本次选中的宿主（第 i/n 位）与适配器；未探测到 CLI 时只告警并继续校验阶段链，正式运行前需按第 4 节配置 `hostCommands` 或环境变量。多宿主共存时默认跨运行轮询，要固定就设 `AGENT_PIPELINE_HOST` / `--adapter` 或 `rotation.enabled=false`。
 5. 运行时 `artifacts/`、`logs/`、`data/` 只出现在 `--work-dir`，安装目录保持干净。
 
 ## 6. 已知限制
